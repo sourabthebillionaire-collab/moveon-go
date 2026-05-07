@@ -1,0 +1,51 @@
+.sup-hero {
+  background: linear-gradient(135deg, #00A040, #00C853);
+  padding: 28px 20px 22px;
+  text-align: center; color: white;
+}
+.sup-icon { font-size: 42px; display: block; margin-bottom: 10px; }
+.sup-hero h2 { font-size: 22px; font-weight: 800; font-family: 'Baloo 2', cursive; margin-bottom: 6px; }
+.sup-hero p { font-size: 13px; color: rgba(255,255,255,0.8); }
+
+.sup-body { padding: 16px; }
+
+.sup-contacts { display: flex; flex-direction: column; gap: 10px; margin-bottom: 4px; }
+.sup-contact-card {
+  display: flex; align-items: center; gap: 14px;
+  padding: 16px; border-radius: var(--radius);
+  text-decoration: none; transition: transform 0.15s;
+  border: 1.5px solid transparent;
+}
+.sup-contact-card:active { transform: scale(0.98); }
+.sup-contact-card.phone { background: var(--green-light); border-color: rgba(0,200,83,0.2); }
+.sup-contact-card.whatsapp { background: #E8F5E9; border-color: rgba(76,175,80,0.2); }
+.sup-contact-card.email { background: var(--blue-light); border-color: rgba(21,101,192,0.2); }
+.scc-icon { font-size: 28px; flex-shrink: 0; }
+.scc-label { font-size: 11px; color: var(--text-muted); font-weight: 500; margin-bottom: 2px; }
+.scc-val { font-size: 15px; font-weight: 700; color: var(--text); }
+.scc-sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+.sup-faqs { display: flex; flex-direction: column; gap: 8px; }
+.faq-item { padding: 14px; cursor: pointer; transition: background 0.15s; }
+.faq-item:hover { background: var(--bg); }
+.faq-q {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  font-size: 13px; font-weight: 600; color: var(--text);
+}
+.faq-arrow { font-size: 10px; color: var(--text-muted); flex-shrink: 0; }
+.faq-a {
+  font-size: 12px; color: var(--text-secondary);
+  line-height: 1.6; margin-top: 10px;
+  padding-top: 10px; border-top: 1px solid var(--border);
+}
+
+.sup-report { padding: 14px; margin-bottom: 8px; }
+.sup-textarea {
+  width: 100%; border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm); padding: 12px;
+  font-family: 'Poppins', sans-serif; font-size: 13px;
+  color: var(--text); resize: none; outline: none;
+  transition: border-color 0.2s;
+}
+.sup-textarea:focus { border-color: var(--green); }
+.sup-textarea::placeholder { color: var(--text-muted); }

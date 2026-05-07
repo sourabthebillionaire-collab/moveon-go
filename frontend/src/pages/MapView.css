@@ -1,0 +1,69 @@
+.map-page {
+  padding-top: var(--header-h);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.map-filters {
+  display: flex; gap: 8px; overflow-x: auto;
+  scrollbar-width: none; padding: 10px 16px;
+  background: var(--white);
+  border-bottom: 1px solid var(--gray-200);
+  flex-shrink: 0;
+}
+.map-filters::-webkit-scrollbar { display: none; }
+
+.map-canvas { flex: 1; min-height: 0; z-index: 1; }
+
+.map-panel {
+  background: var(--white);
+  border-top: 1px solid var(--gray-200);
+  padding: 12px 0 calc(var(--nav-h) + 4px);
+  box-shadow: 0 -4px 16px rgba(0,0,0,0.06);
+  z-index: 10; flex-shrink: 0;
+  max-height: 48vh; overflow-y: auto;
+}
+
+.map-empty {
+  display: flex; align-items: center; gap: 10px;
+  padding: 14px 16px;
+  font-size: 13px; color: var(--gray-400);
+}
+.map-empty__dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--gray-300); flex-shrink: 0;
+}
+
+.map-detail { padding: 0 16px; }
+
+.map-detail__row {
+  display: flex; align-items: center;
+  gap: 12px; margin-bottom: 10px;
+}
+.map-detail__badge {
+  padding: 6px 10px; border-radius: var(--radius-sm);
+  background: var(--blue-800); color: white;
+  font-size: 11px; font-weight: 800;
+  letter-spacing: 0.5px; flex-shrink: 0;
+}
+.map-detail__info { flex: 1; min-width: 0; }
+.map-detail__num   { font-size: 14px; font-weight: 700; color: var(--gray-900); }
+.map-detail__route { font-size: 12px; color: var(--gray-400); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.map-detail__status { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--gray-500); margin-top: 4px; }
+
+.map-detail__eta { text-align: right; flex-shrink: 0; }
+.map-detail__eta-val  { font-size: 18px; font-weight: 800; color: var(--blue-800); line-height: 1; }
+.map-detail__eta-dist { font-size: 11px; color: var(--gray-400); }
+
+.map-detail__occ {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 12px; font-size: 11px; color: var(--gray-400);
+}
+.map-detail__occ-bar {
+  flex: 1; height: 6px; background: var(--gray-200);
+  border-radius: 4px; overflow: hidden;
+}
+.map-detail__occ-fill { height: 100%; border-radius: 4px; transition: width 0.4s ease; }
+
+.map-detail__actions { display: flex; gap: 10px; }

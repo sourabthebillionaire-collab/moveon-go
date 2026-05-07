@@ -1,0 +1,46 @@
+.priv-hero {
+  background: linear-gradient(135deg, #0D47A1, #1565C0);
+  padding: 28px 20px 24px;
+  text-align: center;
+  color: white;
+}
+.priv-icon { font-size: 40px; display: block; margin-bottom: 10px; }
+.priv-hero h2 {
+  font-size: 20px; font-weight: 800;
+  font-family: 'Baloo 2', cursive; margin-bottom: 8px;
+}
+.priv-hero p { font-size: 13px; color: rgba(255,255,255,0.8); line-height: 1.5; margin-bottom: 10px; }
+.priv-date {
+  display: inline-block;
+  background: rgba(255,255,255,0.15);
+  padding: 4px 12px; border-radius: 20px;
+  font-size: 11px; color: rgba(255,255,255,0.7);
+}
+
+.priv-body { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+
+.priv-section { padding: 16px; }
+.priv-title {
+  font-size: 14px; font-weight: 700;
+  color: var(--blue); margin-bottom: 10px;
+}
+.priv-content {
+  font-size: 12px; color: var(--text-secondary);
+  line-height: 1.7; white-space: pre-line;
+}
+
+.priv-footer {
+  text-align: center; padding: 16px;
+  display: flex; flex-direction: column; gap: 10px;
+  align-items: center;
+}
+.priv-footer p { font-size: 13px; color: var(--text-muted); }
+.priv-phone, .priv-email {
+  display: inline-block;
+  padding: 10px 20px;
+  border-radius: var(--radius-sm);
+  font-size: 14px; font-weight: 600;
+  text-decoration: none; width: 100%;
+}
+.priv-phone { background: var(--green-light); color: var(--green-dark); }
+.priv-email { background: var(--blue-light); color: var(--blue); }

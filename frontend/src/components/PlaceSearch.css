@@ -1,0 +1,62 @@
+.ps-wrap { position: relative; width: 100%; }
+
+.ps-field {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--gray-100);
+  border: 1.5px solid var(--gray-200);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  transition: all 0.2s;
+}
+.ps-field--open,
+.ps-field:focus-within {
+  background: var(--white);
+  border-color: var(--blue-700);
+  box-shadow: 0 0 0 3px rgba(21,101,192,0.08);
+}
+
+.ps-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+
+.ps-input {
+  flex: 1; border: none; background: transparent;
+  font-family: inherit; font-size: 14px; color: var(--gray-900); outline: none;
+}
+.ps-input::placeholder { color: var(--gray-400); }
+
+.ps-clear {
+  background: none; border: none; cursor: pointer;
+  color: var(--gray-400); padding: 2px; display: flex; align-items: center;
+  border-radius: 4px; transition: color 0.15s;
+}
+.ps-clear:hover { color: var(--gray-700); }
+
+.ps-dropdown {
+  position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+  background: var(--white); border-radius: var(--radius);
+  border: 1px solid var(--gray-200); box-shadow: var(--shadow-lg);
+  z-index: 500; overflow: hidden;
+  max-height: 260px; overflow-y: auto;
+  animation: slideUp 0.15s ease;
+}
+
+.ps-group-label {
+  padding: 8px 12px 4px;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.5px;
+  text-transform: uppercase; color: var(--gray-400);
+}
+
+.ps-item {
+  width: 100%; display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; background: none; border: none; cursor: pointer;
+  text-align: left; transition: background 0.12s; border-bottom: 1px solid var(--gray-100);
+  font-family: inherit;
+}
+.ps-item:last-child { border-bottom: none; }
+.ps-item:hover { background: var(--blue-50); }
+
+.ps-item-icon { color: var(--gray-400); flex-shrink: 0; }
+.ps-item-text { flex: 1; min-width: 0; }
+.ps-item-name { display: block; font-size: 13px; font-weight: 500; color: var(--gray-900); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ps-item-sub  { display: block; font-size: 11px; color: var(--gray-400); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+
+.ps-empty { padding: 16px 12px; font-size: 13px; color: var(--gray-400); text-align: center; }

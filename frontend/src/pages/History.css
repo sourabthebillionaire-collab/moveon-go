@@ -1,0 +1,20 @@
+.hist-strip {
+  display: flex; align-items: center;
+  background: var(--white); padding: 14px 8px;
+  border-bottom: 1px solid var(--gray-200);
+}
+.hist-strip-item  { flex: 1; text-align: center; }
+.hist-strip-val   { display: block; font-size: 20px; font-weight: 800; color: var(--blue-800); line-height: 1; }
+.hist-strip-key   { display: block; font-size: 11px; color: var(--gray-400); margin-top: 3px; }
+.hist-strip-div   { width: 1px; height: 32px; background: var(--gray-200); }
+
+.hist-card        { padding: 14px; }
+.hist-card-top    { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.hist-type-badge  { padding: 5px 10px; border-radius: var(--radius-sm); background: var(--blue-800); color: white; font-size: 11px; font-weight: 800; flex-shrink: 0; }
+.hist-route       { flex: 1; display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--gray-400); }
+.hist-from, .hist-to { font-size: 12px; font-weight: 600; color: var(--gray-900); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 72px; }
+.hist-fare        { font-size: 15px; font-weight: 800; color: var(--gray-900); flex-shrink: 0; }
+.hist-card-btm    { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.hist-meta        { font-size: 11px; color: var(--gray-400); }
+.hist-time        { font-size: 11px; color: var(--gray-400); margin-left: auto; }
+.hist-rebook      { font-size: 12px; font-weight: 600; color: var(--blue-800); background: none; border: none; cursor: pointer; font-family: inherit; padding: 0; }
