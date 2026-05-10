@@ -6,26 +6,40 @@
  */
 
 const BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+const REQUEST_TIMEOUT = 10000; // 10 seconds
 
 async function request(method, path, body = null, token = null) {
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  const res = await fetch(`${BASE}${path}`, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
 
-  const data = await res.json().catch(() => ({}));
+    const res = await fetch(`${BASE}${path}`, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+      signal: controller.signal,
+    });
 
-  if (!res.ok) {
-    const err = new Error(data.message || `Request failed: ${res.status}`);
-    err.status = res.status;
-    err.data   = data;
-    throw err;
+    clearTimeout(timeoutId);
+
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      const err = new Error(data.message || `Request failed: ${res.status}`);
+      err.status = res.status;
+      err.data   = data;
+      throw err;
+    }
+    return data;
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      throw new Error(`Request timeout (${REQUEST_TIMEOUT}ms). Please check your connection.`);
+    }
+    throw error;
   }
-  return data;
 }
 
 const get    = (path, token)       => request('GET',    path, null, token);

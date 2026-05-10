@@ -1,61 +1,62 @@
 const router = require('express').Router();
 const { User } = require('../models');
 const { protect, signToken } = require('../middleware/auth');
+const logger = require('../utils/logger');
+const { asyncHandler, AppError } = require('../utils/errorHandler');
+const { authLimiter } = require('../utils/rateLimiter');
 
 // POST /api/auth/login
 // Body: { phone }
 // Just enter phone → saved to DB → JWT returned → logged in
-router.post('/login', async (req, res) => {
-  try {
-    let { phone, name } = req.body;
+router.post('/login', authLimiter, asyncHandler(async (req, res) => {
+  let { phone, name } = req.body;
 
-    if (!phone || !phone.trim()) {
-      return res.status(400).json({ message: 'Phone number is required.' });
-    }
-
-    // Clean phone number — keep only digits and +
-    phone = phone.trim().replace(/[^0-9+]/g, '');
-
-    // Must be at least 10 digits
-    if (phone.replace(/\D/g, '').length < 10) {
-      return res.status(400).json({ message: 'Please enter a valid 10-digit phone number.' });
-    }
-
-    // Find existing user or create new one
-    let user = await User.findOne({ phone });
-    const isNew = !user;
-
-    if (!user) {
-      user = await User.create({
-        phone,
-        name: name?.trim() || '',
-        lastLogin: new Date(),
-      });
-    } else {
-      await User.updateOne({ _id: user._id }, { lastLogin: new Date() });
-    }
-
-    // Generate JWT token
-    const token = signToken({ id: user._id, type: 'user' });
-
-    res.json({
-      message: isNew ? 'Welcome to MoveOn Go!' : 'Welcome back!',
-      token,
-      user: {
-        id:    user._id,
-        phone: user.phone,
-        name:  user.name,
-        email: user.email,
-        role:  user.role,
-        isNew,
-      },
-    });
-
-  } catch (err) {
-    console.error('[Auth] Login error:', err.message);
-    res.status(500).json({ message: 'Login failed. Please try again.' });
+  if (!phone || !phone.trim()) {
+    logger.warn('Login attempt without phone number');
+    return res.status(400).json({ message: 'Phone number is required.' });
   }
-});
+
+  // Clean phone number — keep only digits and +
+  phone = phone.trim().replace(/[^0-9+]/g, '');
+
+  // Must be at least 10 digits
+  if (phone.replace(/\D/g, '').length < 10) {
+    logger.warn(`Login attempt with invalid phone: ${phone}`);
+    return res.status(400).json({ message: 'Please enter a valid 10-digit phone number.' });
+  }
+
+  // Find existing user or create new one
+  let user = await User.findOne({ phone });
+  const isNew = !user;
+
+  if (!user) {
+    user = await User.create({
+      phone,
+      name: name?.trim() || '',
+      lastLogin: new Date(),
+    });
+    logger.info(`New user registered: ${phone}`);
+  } else {
+    await User.updateOne({ _id: user._id }, { lastLogin: new Date() });
+    logger.info(`User login: ${phone}`);
+  }
+
+  // Generate JWT token
+  const token = signToken({ id: user._id, type: 'user' });
+
+  res.json({
+    message: isNew ? 'Welcome to MoveOn Go!' : 'Welcome back!',
+    token,
+    user: {
+      id:    user._id,
+      phone: user.phone,
+      name:  user.name,
+      email: user.email,
+      role:  user.role,
+      isNew,
+    },
+  });
+}));
 
 // GET /api/auth/me — get current user
 router.get('/me', protect, (req, res) => {
