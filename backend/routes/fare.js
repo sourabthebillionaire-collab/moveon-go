@@ -18,6 +18,12 @@ fareRouter.post('/estimate', asyncHandler(async (req, res) => {
     return res.status(400).json({ message: 'from, to and vehicleType required.' });
   }
 
+  // Validate coordinates
+  if (!from.lat || !from.lng || !to.lat || !to.lng) {
+    logger.warn('Fare estimate: missing or invalid coordinates', { from, to });
+    return res.status(400).json({ message: 'Coordinates required: from.lat, from.lng, to.lat, to.lng (must be numbers)' });
+  }
+
   const distKm = haversine(from.lat, from.lng, to.lat, to.lng);
   const rates  = { auto: { base:25, per:14 }, cab: { base:60, per:16 }, bike: { base:20, per:8 } };
   const r      = rates[vehicleType] || rates.auto;
