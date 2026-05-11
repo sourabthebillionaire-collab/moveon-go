@@ -1,0 +1,22 @@
+<svg width="60" height="60" viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Bus shape -->
+  <rect x="10" y="12" width="40" height="32" rx="4" fill="#1e40af" stroke="#1e40af" stroke-width="2"/>
+  
+  <!-- Windows -->
+  <rect x="14" y="16" width="8" height="7" fill="#87ceeb"/>
+  <rect x="26" y="16" width="8" height="7" fill="#87ceeb"/>
+  <rect x="38" y="16" width="8" height="7" fill="#87ceeb"/>
+  
+  <!-- Door -->
+  <line x1="30" y1="24" x2="30" y2="40" stroke="#87ceeb" stroke-width="1.5"/>
+  
+  <!-- Wheels -->
+  <circle cx="18" cy="44" r="3.5" fill="#1e40af" stroke="#000" stroke-width="1"/>
+  <circle cx="42" cy="44" r="3.5" fill="#1e40af" stroke="#000" stroke-width="1"/>
+  
+  <!-- Location pin accent -->
+  <path d="M30 48 L28 54 L30 52 L32 54 Z" fill="#ef4444"/>
+  
+  <!-- Tracking dot -->
+  <circle cx="30" cy="28" r="2" fill="#10b981"/>
+</svg>

@@ -67,7 +67,7 @@ export default function Login() {
         {/* Brand */}
         <div className="login-brand">
           <img
-            src="/logo.png"
+            src="/logo.svg"
             alt="MoveOn Go"
             className="login-logo"
             onError={e => { e.target.style.display = 'none'; }}

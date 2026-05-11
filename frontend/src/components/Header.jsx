@@ -29,7 +29,7 @@ export default function Header({ title, showBack, onBack, transparent }) {
             <span className="header__title">{title}</span>
           ) : (
             <div className="header__brand" onClick={() => navigate('/')}>
-              <img src="/logo.png" alt="MoveOn Go" className="header__logo" />
+              <img src="/logo.svg" alt="MoveOn Go" className="header__logo" />
               <span className="header__brand-name">MoveOn<span>Go</span></span>
             </div>
           )}

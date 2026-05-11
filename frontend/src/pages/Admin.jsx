@@ -40,7 +40,7 @@ function AdminLogin({ onLogin }) {
     <div className="al-page">
       <div className="al-box">
         <div className="al-brand">
-          <img src="/logo.png" alt="" onError={e => e.target.style.display='none'} className="al-logo"/>
+          <img src="/logo.svg" alt="" onError={e => e.target.style.display='none'} className="al-logo"/>
           <div>
             <h1 className="al-title">MoveOn Go</h1>
             <p className="al-sub">Admin Dashboard</p>
@@ -144,7 +144,7 @@ function Dashboard({ token, onLogout }) {
       {/* Header */}
       <div className="ad-header">
         <div className="ad-header-brand">
-          <img src="/logo.png" alt="" onError={e=>e.target.style.display='none'} className="ad-header-logo"/>
+          <img src="/logo.svg" alt="" onError={e=>e.target.style.display='none'} className="ad-header-logo"/>
           <span>MoveOn Go · Admin</span>
         </div>
         <div className="ad-header-right">

@@ -47,7 +47,7 @@ export default function PWAInstallBanner() {
   return (
     <div className="pwa-banner">
       <div className="pwa-banner-left">
-        <img src="/logo.png" alt="MoveOn Go" className="pwa-banner-logo" />
+        <img src="/logo.svg" alt="MoveOn Go" className="pwa-banner-logo" />
         <div>
           <div className="pwa-banner-title">Install MoveOn Go</div>
           <div className="pwa-banner-sub">Add to home screen · Works offline</div>
