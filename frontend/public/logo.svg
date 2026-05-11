@@ -1,22 +1,27 @@
-<svg width="60" height="60" viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <!-- Bus shape -->
-  <rect x="10" y="12" width="40" height="32" rx="4" fill="#1e40af" stroke="#1e40af" stroke-width="2"/>
+<svg width="120" height="120" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="pinGradient" x1="20" y1="20" x2="100" y2="100">
+      <stop offset="0%" style="stop-color:#0ea5e9;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#10b981;stop-opacity:1" />
+    </linearGradient>
+    <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-opacity="0.3"/>
+    </filter>
+  </defs>
   
-  <!-- Windows -->
-  <rect x="14" y="16" width="8" height="7" fill="#87ceeb"/>
-  <rect x="26" y="16" width="8" height="7" fill="#87ceeb"/>
-  <rect x="38" y="16" width="8" height="7" fill="#87ceeb"/>
+  <!-- Background circle -->
+  <circle cx="60" cy="60" r="55" fill="#0f172a" opacity="0.1"/>
   
-  <!-- Door -->
-  <line x1="30" y1="24" x2="30" y2="40" stroke="#87ceeb" stroke-width="1.5"/>
-  
-  <!-- Wheels -->
-  <circle cx="18" cy="44" r="3.5" fill="#1e40af" stroke="#000" stroke-width="1"/>
-  <circle cx="42" cy="44" r="3.5" fill="#1e40af" stroke="#000" stroke-width="1"/>
-  
-  <!-- Location pin accent -->
-  <path d="M30 48 L28 54 L30 52 L32 54 Z" fill="#ef4444"/>
-  
-  <!-- Tracking dot -->
-  <circle cx="30" cy="28" r="2" fill="#10b981"/>
+  <!-- Main pin shape -->
+  <g filter="url(#shadow)">
+    <!-- Pin body -->
+    <path d="M 60 20 C 75 20 87 32 87 47 C 87 65 60 100 60 100 C 60 100 33 65 33 47 C 33 32 45 20 60 20 Z" 
+          fill="url(#pinGradient)" stroke="url(#pinGradient)" stroke-width="1.5"/>
+    
+    <!-- Inner highlight -->
+    <circle cx="60" cy="45" r="12" fill="white" opacity="0.3"/>
+    
+    <!-- Checkmark/accent in the pin -->
+    <path d="M 55 48 L 58 51 L 65 42" stroke="white" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.9"/>
+  </g>
 </svg>
