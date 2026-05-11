@@ -82,14 +82,14 @@ app.get('/health', (req, res) => {
 });
 
 // ── Serve Frontend (Production) ───────────────────────────────
-const path = require('path');
-if (process.env.NODE_ENV === 'production') {
-  const frontendBuildPath = path.join(__dirname, '../frontend/dist');
-  app.use(express.static(frontendBuildPath));
-  app.get('*', (req, res) => {
-    res.sendFile(path.join(frontendBuildPath, 'index.html'));
-  });
-}
+// const path = require('path');
+// if (process.env.NODE_ENV === 'production') {
+//   const frontendBuildPath = path.join(__dirname, '../frontend/dist');
+//   app.use(express.static(frontendBuildPath));
+//   app.get('*', (req, res) => {
+//     res.sendFile(path.join(frontendBuildPath, 'index.html'));
+//   });
+// }
 
 // ── 404 ───────────────────────────────────────────────────────
 app.use((req, res) => {
