@@ -12,6 +12,7 @@ export default function Profile() {
   const [editing, setEditing] = useState(false);
   const [name,    setName]    = useState(user?.name || '');
   const [email,   setEmail]   = useState(user?.email || '');
+  const [adminTap, setAdminTap] = useState(0);
 
   const tripCount = getTrips().length;
   const favCount  = getFavourites().length;
@@ -25,8 +26,14 @@ export default function Profile() {
   ];
 
   const handleSave = () => {
-    // TODO: call api.updateProfile when backend ready
     setEditing(false);
+  };
+
+  // Secret tap: tap version text 5 times to reveal admin button
+  const handleVersionTap = () => {
+    const next = adminTap + 1;
+    setAdminTap(next);
+    if (next >= 5) setAdminTap(5);
   };
 
   return (
@@ -98,9 +105,24 @@ export default function Profile() {
             onClick={() => { logout(); navigate('/'); }}>
             Sign Out
           </button>
-          <p style={{ textAlign: 'center', fontSize: 11, color: 'var(--gray-400)', marginTop: 12 }}>
+
+          {/* Secret admin access - tap version 5 times */}
+          <p
+            onClick={handleVersionTap}
+            style={{ textAlign: 'center', fontSize: 11, color: 'var(--gray-400)', marginTop: 12, cursor: 'default', userSelect: 'none' }}>
             MoveOn Go · v1.0.0 · Made in India
           </p>
+
+          {/* Admin button appears after 5 taps */}
+          {adminTap >= 5 && (
+            <button
+              className="btn btn--ghost btn--full"
+              style={{ marginTop: 8, fontSize: 13, color: 'var(--gray-400)', border: '1px solid var(--gray-700)' }}
+              onClick={() => navigate('/admin')}>
+              🔐 Admin Access
+            </button>
+          )}
+
         </div>
       </div>
       <BottomNav />
