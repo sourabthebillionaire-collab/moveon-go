@@ -110,7 +110,6 @@ router.put('/drivers/:id/approve', adminAuth, async (req, res) => {
 
     if (!driver) return res.status(404).json({ message: 'Driver not found.' });
 
-    // Notify via socket if connected
     if (global.io) {
       global.io.emit('driver:approved', { driverId: driver._id, vehicleId: driver.vehicleId });
     }
@@ -133,17 +132,34 @@ router.put('/drivers/:id/reject', adminAuth, async (req, res) => {
 
     if (!driver) return res.status(404).json({ message: 'Driver not found.' });
 
+    // ✅ Kick driver off active session immediately
+    if (global.io) {
+      global.io.to(`driver:${req.params.id}`).emit('driver:kicked', {
+        reason: reason || 'Your account has been rejected by admin.',
+      });
+    }
+
     res.json({ message: `Driver ${driver.name} rejected.`, driver });
   } catch (err) {
     res.status(500).json({ message: 'Failed to reject driver.' });
   }
 });
 
-// DELETE /api/admin/drivers/:id
+// DELETE /api/admin/drivers/:id  ✅ NOW KICKS DRIVER INSTANTLY
 router.delete('/drivers/:id', adminAuth, async (req, res) => {
   try {
-    await Driver.findByIdAndDelete(req.params.id);
-    res.json({ message: 'Driver deleted.' });
+    const driver = await Driver.findByIdAndDelete(req.params.id);
+    if (!driver) return res.status(404).json({ message: 'Driver not found.' });
+
+    // ✅ Emit kick event to that driver's socket room instantly
+    // Driver.jsx listens for this and clears session + redirects to login
+    if (global.io) {
+      global.io.to(`driver:${req.params.id}`).emit('driver:kicked', {
+        reason: 'Your account has been removed by admin.',
+      });
+    }
+
+    res.json({ message: `Driver ${driver.name} deleted.` });
   } catch (err) {
     res.status(500).json({ message: 'Failed to delete driver.' });
   }

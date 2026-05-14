@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Header from '../components/Header';
 import api from '../services/api';
-import { emitLocation, onRideRequest, emitRideResponse, connectSocket, disconnectSocket } from '../services/socket';
+import { emitLocation, onRideRequest, emitRideResponse, connectSocket, disconnectSocket, getSocket } from '../services/socket';
 import { setDriverSession, getDriver, getDriverToken, clearDriverSession } from '../services/storage';
 import { watchPosition } from '../services/geocoding';
 import './Driver.css';
@@ -176,6 +176,7 @@ export default function Driver() {
   const [error,     setError]     = useState('');
   const [busy,      setBusy]      = useState(false);
   const [driver,    setDriver]    = useState(() => getDriver());
+  const [kickedMsg, setKickedMsg] = useState(''); // ✅ NEW — message shown when admin kicks driver
   const pinInputRef = useRef(null);
 
   // Panel state
@@ -186,16 +187,58 @@ export default function Driver() {
   const [earnings,  setEarnings]  = useState(0);
   const [passengers,setPassengers]= useState(0);
   const [tripActive,setTripActive]= useState(false);
-  const [rideReq,   setRideReq]   = useState(null);   // incoming ride
+  const [rideReq,   setRideReq]   = useState(null);
   const [issueSheet,setIssueSheet]= useState(false);
   const unwatchRef  = useRef(null);
   const pingRef     = useRef(null);
 
   const t = T[lang];
 
-  // If already signed in, go straight to panel
+  // ✅ FIXED — verify session with backend on mount, don't just trust localStorage
   useEffect(() => {
-    if (driver && getDriverToken()) setStep('panel');
+    const token = getDriverToken();
+    const saved = getDriver();
+    if (!token || !saved) return; // not logged in, stay on login screen
+
+    // Verify the driver still exists and is approved in the backend
+    (async () => {
+      try {
+        // Connect socket first so we can receive kick event even before panel loads
+        const socket = connectSocket();
+
+        // Listen for admin kick event
+        socket.on('driver:kicked', ({ reason }) => {
+          unwatchRef.current?.();
+          clearInterval(pingRef.current);
+          disconnectSocket();
+          clearDriverSession();
+          setDriver(null);
+          setOnDuty(false);
+          setStep('id');
+          setKickedMsg(reason || 'Your account has been removed by admin.');
+        });
+
+        // Call backend to verify driver is still valid
+        await api.getDriverProfile(token); // see note below — add this to api.js
+        setStep('panel');
+      } catch (err) {
+        // 401 = driver deleted or token invalid → force logout
+        if (err.status === 401 || err.status === 404) {
+          clearDriverSession();
+          setDriver(null);
+          setKickedMsg('Your account no longer exists. Contact admin.');
+        }
+        // Network error → still let them in (offline tolerance)
+        else {
+          setStep('panel');
+        }
+      }
+    })();
+
+    return () => {
+      const socket = getSocket();
+      socket?.off('driver:kicked');
+    };
   }, []);
 
   // ── Auth: Step 1 — validate Vehicle ID ─────────────────────
@@ -219,6 +262,23 @@ export default function Driver() {
       const { driver: d, token } = await api.driverLogin(vehicleId.trim().toUpperCase(), pin);
       setDriverSession(d, token);
       setDriver(d);
+
+      // ✅ Connect socket and register driver room immediately after login
+      const socket = connectSocket();
+      socket.emit('driver:register', { driverId: d.id || d._id });
+
+      // Listen for kick event
+      socket.on('driver:kicked', ({ reason }) => {
+        unwatchRef.current?.();
+        clearInterval(pingRef.current);
+        disconnectSocket();
+        clearDriverSession();
+        setDriver(null);
+        setOnDuty(false);
+        setStep('id');
+        setKickedMsg(reason || 'Your account has been removed by admin.');
+      });
+
       setStep('panel');
       setPin('');
     } catch (err) {
@@ -230,18 +290,33 @@ export default function Driver() {
   // ── Panel: start duty ───────────────────────────────────────
   const startDuty = async () => {
     setOnDuty(true);
-    connectSocket();
     speak(t.gpsActive, lang);
     try { await api.setDriverDuty(true, getDriverToken()); } catch {}
 
     unwatchRef.current = watchPosition(pos => {
       setGpsPos(pos);
       setSpeed(Math.round((pos.speed || 0) * 3.6));
-      emitLocation({ driverId: driver?.id, vehicleId: driver?.vehicleId, lat: pos.lat, lng: pos.lng, bearing: pos.bearing || 0, speed: Math.round((pos.speed||0)*3.6), status: 'active' });
+      emitLocation({
+        driverId: driver?.id || driver?._id,
+        vehicleId: driver?.vehicleId,
+        lat: pos.lat, lng: pos.lng,
+        bearing: pos.bearing || 0,
+        speed: Math.round((pos.speed || 0) * 3.6),
+        status: 'active',
+        type: driver?.vehicleType,
+        vehicleNumber: driver?.vehicleNumber,
+      });
     });
 
     pingRef.current = setInterval(() => {
-      if (gpsPos) emitLocation({ driverId: driver?.id, vehicleId: driver?.vehicleId, lat: gpsPos.lat, lng: gpsPos.lng, status: 'active' });
+      if (gpsPos) emitLocation({
+        driverId: driver?.id || driver?._id,
+        vehicleId: driver?.vehicleId,
+        lat: gpsPos.lat, lng: gpsPos.lng,
+        status: 'active',
+        type: driver?.vehicleType,
+        vehicleNumber: driver?.vehicleNumber,
+      });
     }, 10000);
   };
 
@@ -295,7 +370,7 @@ export default function Driver() {
   // ── SOS ─────────────────────────────────────────────────────
   const handleSOS = () => {
     if (!window.confirm(t.confirmSos)) return;
-    if (gpsPos) emitLocation({ driverId: driver?.id, vehicleId: driver?.vehicleId, lat: gpsPos.lat, lng: gpsPos.lng, status: 'SOS' });
+    if (gpsPos) emitLocation({ driverId: driver?.id || driver?._id, vehicleId: driver?.vehicleId, lat: gpsPos.lat, lng: gpsPos.lng, status: 'SOS' });
     window.open('tel:+917328060281');
   };
 
@@ -306,6 +381,9 @@ export default function Driver() {
     setDriver(null);
     setStep('id');
     setVehicleId('');
+    setKickedMsg('');
+    const socket = getSocket();
+    socket?.off('driver:kicked');
   };
 
   useEffect(() => () => { unwatchRef.current?.(); clearInterval(pingRef.current); }, []);
@@ -329,6 +407,17 @@ export default function Driver() {
           </div>
           <h2 className="drv-auth-title">{t.step1Title}</h2>
           <p className="drv-auth-sub">{t.step1Sub}</p>
+
+          {/* ✅ Show kicked/deleted message if applicable */}
+          {kickedMsg && (
+            <div style={{
+              background: '#FEE2E2', color: '#B91C1C',
+              borderRadius: 8, padding: '10px 14px',
+              fontSize: 13, marginBottom: 12, textAlign: 'center',
+            }}>
+              ⚠️ {kickedMsg}
+            </div>
+          )}
 
           <div className="drv-auth-field">
             <label className="drv-auth-label">{t.vehicleIdLabel}</label>
@@ -376,14 +465,12 @@ export default function Driver() {
           <p className="drv-auth-sub">{t.step2Sub}</p>
           <p className="drv-auth-vehicle-id">{vehicleId}</p>
 
-          {/* PIN dots display */}
           <div className="drv-pin-dots">
             {[0,1,2,3].map(i => (
               <div key={i} className={`drv-pin-dot ${pin.length > i ? 'filled' : ''}`} />
             ))}
           </div>
 
-          {/* Hidden real input */}
           <input
             ref={pinInputRef}
             className="drv-pin-hidden-input"
@@ -397,7 +484,6 @@ export default function Driver() {
             autoComplete="one-time-code"
           />
 
-          {/* Visual numpad */}
           <div className="drv-numpad">
             {[1,2,3,4,5,6,7,8,9,'',0,'⌫'].map((k, i) => (
               <button key={i} className={`drv-numpad-key ${k===''?'drv-numpad-key--empty':''}`}
@@ -428,7 +514,6 @@ export default function Driver() {
       <Header title={t.step1Title} showBack onBack={() => {}} />
       <div className="page drv-panel">
 
-        {/* Lang bar */}
         <div className="drv-lang-row">
           {(['en','hi','or']).map(l => (
             <button key={l} className={`drv-auth-lang-btn ${lang===l?'active':''}`} onClick={() => setLang(l)}>
@@ -441,7 +526,6 @@ export default function Driver() {
           </button>
         </div>
 
-        {/* Driver info + duty status */}
         <div className={`drv-status-card ${onDuty ? 'on' : 'off'}`}>
           <div className="drv-status-card__left">
             <div className="drv-status-card__avatar">{driver?.name?.[0] || 'D'}</div>
@@ -456,14 +540,13 @@ export default function Driver() {
           </div>
         </div>
 
-        {/* Live stats */}
         {onDuty && (
           <div className="drv-stats">
             {[
-              {val: speed,      unit: 'km/h',     label: t.speed     },
-              {val: tripCount,  unit: '',          label: t.trips     },
+              {val: speed,          unit: 'km/h', label: t.speed     },
+              {val: tripCount,      unit: '',     label: t.trips     },
               {val: `₹${earnings}`, unit: '',     label: t.earned    },
-              {val: passengers, unit: '',          label: t.passengers},
+              {val: passengers,     unit: '',     label: t.passengers},
             ].map((s,i) => (
               <div key={i} className="drv-stat">
                 <span className="drv-stat__val">{s.val}<span className="drv-stat__unit">{s.unit}</span></span>
@@ -473,7 +556,6 @@ export default function Driver() {
           </div>
         )}
 
-        {/* GPS indicator */}
         {onDuty && (
           <div className="drv-gps-bar">
             <span className="live-dot" style={{width:7,height:7}}/>
@@ -482,42 +564,30 @@ export default function Driver() {
           </div>
         )}
 
-        {/* Main action */}
         <div className="drv-main-action">
           {!onDuty ? (
-            <button className="drv-duty-btn start" onClick={startDuty}>
-              {t.startDuty}
-            </button>
+            <button className="drv-duty-btn start" onClick={startDuty}>{t.startDuty}</button>
           ) : tripActive ? (
-            <button className="drv-duty-btn end-trip" onClick={endTrip}>
-              {t.endTrip}
-            </button>
+            <button className="drv-duty-btn end-trip" onClick={endTrip}>{t.endTrip}</button>
           ) : (
-            <button className="drv-duty-btn end-duty" onClick={endDuty}>
-              {t.endDuty}
-            </button>
+            <button className="drv-duty-btn end-duty" onClick={endDuty}>{t.endDuty}</button>
           )}
         </div>
 
-        {/* Secondary actions */}
         {onDuty && (
           <div className="drv-actions">
             <button className="drv-action-btn" onClick={() => setIssueSheet(true)}>
-              <WarningIcon />
-              <span>{t.reportIssue}</span>
+              <WarningIcon /><span>{t.reportIssue}</span>
             </button>
             <button className="drv-action-btn" onClick={() => window.open('tel:+917328060281')}>
-              <PhoneIcon />
-              <span>{t.callControl}</span>
+              <PhoneIcon /><span>{t.callControl}</span>
             </button>
             <button className="drv-action-btn drv-action-btn--sos" onClick={handleSOS}>
-              <SosIcon />
-              <span>{t.sos}</span>
+              <SosIcon /><span>{t.sos}</span>
             </button>
           </div>
         )}
 
-        {/* Today summary */}
         {onDuty && (
           <div style={{padding:'0 16px'}}>
             <p className="section-label" style={{padding:'16px 0 8px'}}>{t.todaySummary}</p>
@@ -538,10 +608,8 @@ export default function Driver() {
             </div>
           </div>
         )}
-
       </div>
 
-      {/* ── Ride Request Bottom Sheet ── */}
       {rideReq && (
         <>
           <div className="overlay" onClick={() => {}} />
@@ -557,7 +625,6 @@ export default function Driver() {
                 <div className="drv-ride-sheet__sub">Respond within 30 seconds</div>
               </div>
             </div>
-
             <div className="drv-ride-sheet__body">
               <div className="drv-ride-row">
                 <div className="drv-ride-dot drv-ride-dot--green"/>
@@ -574,7 +641,6 @@ export default function Driver() {
                   <div className="drv-ride-row__val">{rideReq.dropoff}</div>
                 </div>
               </div>
-
               <div className="drv-ride-meta">
                 <div className="drv-ride-chip">
                   <span className="drv-ride-chip__label">{t.fare}</span>
@@ -590,20 +656,14 @@ export default function Driver() {
                 </div>
               </div>
             </div>
-
             <div className="drv-ride-sheet__actions">
-              <button className="btn btn--danger btn--lg" style={{flex:1}} onClick={declineRide}>
-                {t.decline}
-              </button>
-              <button className="btn btn--primary btn--lg" style={{flex:1,background:'var(--green-600)'}} onClick={acceptRide}>
-                {t.accept}
-              </button>
+              <button className="btn btn--danger btn--lg" style={{flex:1}} onClick={declineRide}>{t.decline}</button>
+              <button className="btn btn--primary btn--lg" style={{flex:1,background:'var(--green-600)'}} onClick={acceptRide}>{t.accept}</button>
             </div>
           </div>
         </>
       )}
 
-      {/* ── Issue Bottom Sheet ── */}
       {issueSheet && (
         <>
           <div className="overlay" onClick={() => setIssueSheet(false)} />
@@ -636,7 +696,6 @@ export default function Driver() {
   );
 }
 
-// Icons
 function SteeringIcon() { return <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/><path d="M12 9V3M9.5 10.5L4.5 7M14.5 10.5l5-3"/></svg>; }
 function LockIcon()     { return <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/><circle cx="12" cy="16" r="1.5" fill="currentColor"/></svg>; }
 function WarningIcon()  { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>; }

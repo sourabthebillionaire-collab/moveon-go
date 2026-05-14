@@ -47,16 +47,12 @@ const post   = (path, body, token) => request('POST',   path, body, token);
 const put    = (path, body, token) => request('PUT',    path, body, token);
 const del    = (path, token)       => request('DELETE', path, null, token);
 
-// ── Auth ─────────────────────────────────────────────────────────
 export const api = {
 
-  // Send OTP to phone
-  sendOTP: (phone) =>
-    post('/auth/send-otp', { phone }),
-
-  // Verify OTP → returns { token, user }
-  verifyOTP: (phone, otp) =>
-    post('/auth/verify-otp', { phone, otp }),
+  // ── User Auth ─────────────────────────────────────────────────
+  // Phone login — no OTP, just phone number
+  login: (phone, name) =>
+    post('/auth/login', { phone, name }),
 
   // Get current user profile
   getProfile: (token) =>
@@ -66,7 +62,7 @@ export const api = {
   updateProfile: (data, token) =>
     put('/auth/me', data, token),
 
-  // ── Driver Auth ──────────────────────────────────────────────
+  // ── Driver Auth ───────────────────────────────────────────────
   // Validate vehicle ID exists in system
   validateVehicleId: (vehicleId) =>
     get(`/driver/validate/${vehicleId}`),
@@ -75,11 +71,16 @@ export const api = {
   driverLogin: (vehicleId, pin) =>
     post('/driver/login', { vehicleId, pin }),
 
+  // ✅ Verify driver session is still valid (used on app mount)
+  // Returns 401 if driver was deleted by admin
+  getDriverProfile: (token) =>
+    get('/driver/me', token),
+
   // Register new driver (admin approves)
   driverRegister: (data) =>
     post('/driver/register', data),
 
-  // Update driver location (called every N seconds)
+  // Update driver location (REST fallback, socket is primary)
   updateDriverLocation: (data, token) =>
     post('/driver/location', data, token),
 
@@ -91,7 +92,7 @@ export const api = {
   respondToRide: (rideId, action, token) =>
     post(`/rides/${rideId}/respond`, { action }, token),
 
-  // ── Vehicles / Buses ─────────────────────────────────────────
+  // ── Vehicles / Buses ──────────────────────────────────────────
   // Get all active vehicles near a location
   getNearbyVehicles: (lat, lng, type = 'all') =>
     get(`/vehicles/nearby?lat=${lat}&lng=${lng}&type=${type}`),
@@ -104,11 +105,11 @@ export const api = {
   getBusRoutes: () =>
     get('/buses/routes'),
 
-  // Get single vehicle location
+  // Get single vehicle by ID
   getVehicle: (vehicleId) =>
     get(`/vehicles/${vehicleId}`),
 
-  // ── Bookings ─────────────────────────────────────────────────
+  // ── Bookings ──────────────────────────────────────────────────
   // Create a new ride booking
   createBooking: (data, token) =>
     post('/bookings', data, token),
@@ -125,10 +126,43 @@ export const api = {
   getActiveBooking: (token) =>
     get('/bookings/active', token),
 
-  // ── Fare ─────────────────────────────────────────────────────
-  // Get fare estimate from backend (uses real traffic data)
+  // ── Fare ──────────────────────────────────────────────────────
+  // Get fare estimate
   getFareEstimate: (from, to, vehicleType) =>
     post('/fare/estimate', { from, to, vehicleType }),
+
+  // ── Admin ─────────────────────────────────────────────────────
+  // Admin login
+  adminLogin: (password) =>
+    post('/admin/login', { password }),
+
+  // Get dashboard stats
+  getAdminStats: (token) =>
+    get('/admin/stats', token),
+
+  // Get all drivers
+  getAdminDrivers: (status = 'all', token) =>
+    get(`/admin/drivers?status=${status}`, token),
+
+  // Approve driver
+  approveDriver: (driverId, token) =>
+    put(`/admin/drivers/${driverId}/approve`, {}, token),
+
+  // Reject driver
+  rejectDriver: (driverId, reason, token) =>
+    put(`/admin/drivers/${driverId}/reject`, { reason }, token),
+
+  // Delete driver
+  deleteDriver: (driverId, token) =>
+    del(`/admin/drivers/${driverId}`, token),
+
+  // Get all users
+  getAdminUsers: (token) =>
+    get('/admin/users', token),
+
+  // Get all bookings
+  getAdminBookings: (token) =>
+    get('/admin/bookings', token),
 
 };
 
