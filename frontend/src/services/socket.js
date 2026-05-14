@@ -16,7 +16,7 @@ export function getSocket() {
       reconnectionAttempts: 5,
       reconnectionDelay: 2000,
       timeout: 8000,
-      autoConnect: false, // connect only when needed
+      autoConnect: false,
     });
 
     _socket.on('connect',       () => console.log('[Socket] Connected'));
@@ -55,11 +55,25 @@ export function emitRideResponse(rideId, action) {
   if (s.connected) s.emit('ride:respond', { rideId, action });
 }
 
-// ── Passenger: get nearby vehicles ───────────────────────────
+// ── Passenger: receive initial snapshot of ALL active vehicles ✅ NEW
+export function onVehiclesSnapshot(cb) {
+  const s = getSocket();
+  s.on('vehicles:snapshot', cb);
+  return () => s.off('vehicles:snapshot', cb);
+}
+
+// ── Passenger: receive single vehicle live update ─────────────
 export function onVehiclesUpdate(cb) {
   const s = getSocket();
   s.on('vehicles:update', cb);
   return () => s.off('vehicles:update', cb);
+}
+
+// ── Passenger: handle driver going offline ✅ NEW ─────────────
+export function onDriverOffline(cb) {
+  const s = getSocket();
+  s.on('driver:offline', cb);
+  return () => s.off('driver:offline', cb);
 }
 
 // ── Passenger: track active booking ──────────────────────────

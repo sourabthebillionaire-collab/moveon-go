@@ -6,7 +6,7 @@ import Header from '../components/Header';
 import BottomNav from '../components/BottomNav';
 import { getCurrentPosition } from '../services/geocoding';
 import { getRoute, fmtDist, fmtDuration } from '../services/routing';
-import { onVehiclesUpdate, connectSocket } from '../services/socket';
+import { connectSocket, getSocket, onVehiclesSnapshot, onVehiclesUpdate, onDriverOffline } from '../services/socket';
 import api from '../services/api';
 import './MapView.css';
 
@@ -83,7 +83,7 @@ export default function MapView() {
     })();
   }, []);
 
-  // Fetch nearby vehicles from backend
+  // Fetch nearby vehicles from backend (REST fallback)
   useEffect(() => {
     if (!userPos) return;
     const fetchVehicles = async () => {
@@ -93,7 +93,6 @@ export default function MapView() {
         setVehicles(data.vehicles || []);
         (data.vehicles || []).forEach(v => addOrUpdateMarker(v));
       } catch {
-        // Backend not connected — show empty state, no demo data
         setVehicles([]);
       } finally {
         setLoading(false);
@@ -104,34 +103,79 @@ export default function MapView() {
     return () => clearInterval(interval);
   }, [userPos, filter]);
 
-  // Real-time updates via socket
+  // ── Real-time socket updates ──────────────────────────────────
   useEffect(() => {
-    connectSocket();
-    const unsub = onVehiclesUpdate(data => {
-      setVehicles(data);
-      data.forEach(v => addOrUpdateMarker(v));
+    const socket = connectSocket();
+
+    // Tell server we're a rider — it will send back all active vehicles immediately
+    const handleConnect = () => {
+      socket.emit('rider:connected');
+    };
+
+    // If already connected, emit right away; otherwise wait for connect event
+    if (socket.connected) {
+      socket.emit('rider:connected');
+    } else {
+      socket.on('connect', handleConnect);
+    }
+
+    // ✅ Snapshot — all active vehicles at the moment we connected
+    const unsubSnapshot = onVehiclesSnapshot((vehicles) => {
+      vehicles.forEach(v => addOrUpdateMarker(v));
+      setVehicles(vehicles);
+      setLoading(false);
     });
-    return unsub;
+
+    // ✅ Single vehicle live update — backend emits one vehicle at a time
+    const unsubUpdate = onVehiclesUpdate((vehicle) => {
+      addOrUpdateMarker(vehicle);
+      setVehicles(prev => {
+        const exists = prev.find(v => v.id === vehicle.id);
+        if (exists) return prev.map(v => v.id === vehicle.id ? { ...v, ...vehicle } : v);
+        return [...prev, vehicle];
+      });
+    });
+
+    // ✅ Remove marker when driver disconnects
+    const unsubOffline = onDriverOffline(({ driverId }) => {
+      const id = String(driverId);
+      const map = mapInst.current;
+      if (markersRef.current[id] && map) {
+        map.removeLayer(markersRef.current[id]);
+        delete markersRef.current[id];
+      }
+      setVehicles(prev => prev.filter(v => String(v.id) !== id));
+      setSelected(s => s && String(s.id) === id ? null : s);
+    });
+
+    return () => {
+      socket.off('connect', handleConnect);
+      unsubSnapshot();
+      unsubUpdate();
+      unsubOffline();
+    };
   }, []);
 
   function addOrUpdateMarker(v) {
     const map = mapInst.current;
-    if (!map) return;
-    const existing = markersRef.current[v.id];
+    if (!map || !v.lat || !v.lng) return;
+    const id = String(v.id);
+    const existing = markersRef.current[id];
     if (existing) {
       existing.setLatLng([v.lat, v.lng]);
+      existing.setPopupContent(buildPopup(v));
     } else {
       const m = L.marker([v.lat, v.lng], { icon: vehicleIcon(v.type) })
         .addTo(map)
         .on('click', () => focusVehicle(v));
       m.bindPopup(buildPopup(v));
-      markersRef.current[v.id] = m;
+      markersRef.current[id] = m;
     }
   }
 
   function buildPopup(v) {
     return `<div style="font-family:Inter,sans-serif;font-size:12px;min-width:140px;line-height:1.5">
-      <div style="font-weight:700;margin-bottom:4px">${v.vehicleNumber || v.number}</div>
+      <div style="font-weight:700;margin-bottom:4px">${v.vehicleNumber || v.number || ''}</div>
       ${v.from && v.to ? `<div style="color:#6B7280">${v.from} → ${v.to}</div>` : ''}
       <div style="color:#6B7280">Speed: ${v.speed || 0} km/h</div>
       <div style="color:#6B7280">Status: ${v.status || 'Active'}</div>
@@ -157,7 +201,7 @@ export default function MapView() {
       map.fitBounds(L.latLngBounds([[from.lat, from.lng], [v.lat, v.lng]]).pad(0.2));
       setRouteInfo(route);
     }
-    markersRef.current[v.id]?.openPopup();
+    markersRef.current[String(v.id)]?.openPopup();
     setLoadRoute(false);
   }
 
@@ -182,7 +226,6 @@ export default function MapView() {
 
         {/* Bottom panel */}
         <div className="map-panel">
-          {/* Vehicle chips */}
           {filtered.length > 0 && (
             <div className="chips" style={{paddingBottom:10}}>
               {filtered.map(v => (
@@ -195,7 +238,6 @@ export default function MapView() {
             </div>
           )}
 
-          {/* Empty state */}
           {!loading && filtered.length === 0 && (
             <div className="map-empty">
               <div className="map-empty__dot" />
@@ -210,7 +252,6 @@ export default function MapView() {
             </div>
           )}
 
-          {/* Selected vehicle detail */}
           {selected && (
             <div className="map-detail slide-up">
               <div className="map-detail__row">
