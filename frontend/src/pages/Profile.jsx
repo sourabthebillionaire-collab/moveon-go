@@ -1,131 +1,200 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Header from '../components/Header';
 import BottomNav from '../components/BottomNav';
 import { useAuth } from '../hooks/useAuth';
-import { getTrips, getFavourites } from '../services/storage';
+import api from '../services/api';
+import { getToken, getFavourites } from '../services/storage';
 import './Profile.css';
 
+const MENU = [
+  { label: 'Trip History',    sub: 'View all your past rides',  path: '/history',    icon: '📋' },
+  { label: 'Saved Places',    sub: 'Your favourite locations',  path: '/favourites', icon: '❤️' },
+  { label: 'Settings',        sub: 'Preferences & account',     path: '/settings',   icon: '⚙️' },
+  { label: 'Privacy & Terms', sub: 'Data usage & legal info',   path: '/privacy',    icon: '🔒' },
+  { label: 'Help & Support',  sub: 'FAQs & contact us',         path: '/support',    icon: '💬' },
+];
+
 export default function Profile() {
-  const navigate  = useNavigate();
-  const { user, logout } = useAuth();
-  const [editing, setEditing] = useState(false);
-  const [name,    setName]    = useState(user?.name || '');
-  const [email,   setEmail]   = useState(user?.email || '');
-  const [adminTap, setAdminTap] = useState(0);
+  const navigate          = useNavigate();
+  const { user, logout, updateUser } = useAuth();
 
-  const tripCount = getTrips().length;
-  const favCount  = getFavourites().length;
+  const [editing,   setEditing]   = useState(false);
+  const [name,      setName]      = useState(user?.name  || '');
+  const [email,     setEmail]     = useState(user?.email || '');
+  const [saving,    setSaving]    = useState(false);
+  const [saveErr,   setSaveErr]   = useState('');
+  const [saveOk,    setSaveOk]    = useState(false);
+  const [tripCount, setTripCount] = useState(0);
+  const [adminTap,  setAdminTap]  = useState(0);
 
-  const menu = [
-    { label: 'Trip History',     sub: `${tripCount} trips`,       path: '/history'    },
-    { label: 'Saved Places',     sub: `${favCount} saved`,        path: '/favourites' },
-    { label: 'Settings',         sub: 'Preferences & account',    path: '/settings'   },
-    { label: 'Privacy & Terms',  sub: 'Data usage & legal',       path: '/privacy'    },
-    { label: 'Help & Support',   sub: 'FAQs, contact us',         path: '/support'    },
-  ];
+  const favCount = getFavourites().length;
 
-  const handleSave = () => {
-    setEditing(false);
+  // ✅ Fetch real trip count from backend
+  useEffect(() => {
+    const token = getToken();
+    if (!token) return;
+    api.getBookings(token)
+      .then(data => setTripCount((data.bookings || []).length))
+      .catch(() => {});
+  }, []);
+
+  // ✅ Actually save to backend
+  const handleSave = async () => {
+    setSaveErr(''); setSaveOk(false);
+    if (!name.trim()) { setSaveErr('Name cannot be empty.'); return; }
+    setSaving(true);
+    try {
+      const token = getToken();
+      const data  = await api.updateProfile({ name: name.trim(), email: email.trim() }, token);
+      if (updateUser) updateUser(data.user); // update auth context
+      setSaveOk(true);
+      setTimeout(() => { setSaveOk(false); setEditing(false); }, 1200);
+    } catch (err) {
+      setSaveErr(err.message || 'Failed to save. Please try again.');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  // Secret tap: tap version text 5 times to reveal admin button
+  const handleLogout = () => {
+    logout();
+    navigate('/');
+  };
+
   const handleVersionTap = () => {
-    const next = adminTap + 1;
-    setAdminTap(next);
-    if (next >= 5) setAdminTap(5);
+    setAdminTap(prev => Math.min(prev + 1, 5));
   };
+
+  const initials = (user?.name || 'U')
+    .split(' ')
+    .map(w => w[0])
+    .slice(0, 2)
+    .join('')
+    .toUpperCase();
 
   return (
     <div className="app">
       <Header title="Profile" />
-      <div className="page">
+      <div className="page prf2-page">
 
-        {/* Hero */}
-        <div className="prf-hero">
-          <div className="prf-avatar">{user?.name?.[0] || 'U'}</div>
-          {editing ? (
-            <div className="prf-edit-form">
-              <input className="input" value={name}  onChange={e => setName(e.target.value)}  placeholder="Full Name" style={{ marginBottom: 8 }} />
-              <input className="input" value={email} onChange={e => setEmail(e.target.value)} placeholder="Email Address" />
-              <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
-                <button className="btn btn--ghost" style={{ flex: 1 }} onClick={() => setEditing(false)}>Cancel</button>
-                <button className="btn btn--primary" style={{ flex: 1 }} onClick={handleSave}>Save</button>
-              </div>
-            </div>
-          ) : (
+        {/* ── Hero ─────────────────────────── */}
+        <div className="prf2-hero">
+          <div className="prf2-avatar">
+            <div className="prf2-avatar__initials">{initials}</div>
+            <div className="prf2-avatar__ring"/>
+          </div>
+
+          {!editing ? (
             <>
-              <div className="prf-name">{user?.name || 'User'}</div>
-              <div className="prf-phone">{user?.phone || ''}</div>
-              <button className="btn btn--ghost" style={{ fontSize: 12, padding: '6px 16px', marginTop: 8, color: 'var(--blue-700)' }}
-                onClick={() => setEditing(true)}>
-                Edit Profile
+              <div className="prf2-name">{user?.name || 'User'}</div>
+              <div className="prf2-phone">📱 {user?.phone || '—'}</div>
+              {user?.email && (
+                <div className="prf2-email">✉️ {user.email}</div>
+              )}
+              <button className="prf2-edit-btn" onClick={() => { setEditing(true); setSaveErr(''); setSaveOk(false); }}>
+                ✏️ Edit Profile
               </button>
             </>
+          ) : (
+            <div className="prf2-edit-form">
+              <div className="prf2-edit-field">
+                <label>Full Name</label>
+                <input className="prf2-input" value={name}
+                  onChange={e => { setName(e.target.value); setSaveErr(''); }}
+                  placeholder="Your full name" autoFocus/>
+              </div>
+              <div className="prf2-edit-field">
+                <label>Email <span style={{color:'#94A3B8',fontWeight:400}}>(optional)</span></label>
+                <input className="prf2-input" type="email" value={email}
+                  onChange={e => { setEmail(e.target.value); setSaveErr(''); }}
+                  placeholder="your@email.com"/>
+              </div>
+              {saveErr && (
+                <div className="prf2-save-err">⚠️ {saveErr}</div>
+              )}
+              {saveOk && (
+                <div className="prf2-save-ok">✓ Profile updated!</div>
+              )}
+              <div className="prf2-edit-actions">
+                <button className="prf2-btn prf2-btn--ghost"
+                  onClick={() => { setEditing(false); setName(user?.name||''); setEmail(user?.email||''); setSaveErr(''); }}>
+                  Cancel
+                </button>
+                <button className="prf2-btn prf2-btn--primary" onClick={handleSave} disabled={saving}>
+                  {saving ? <><span className="prf2-spinner"/>Saving...</> : 'Save Changes'}
+                </button>
+              </div>
+            </div>
           )}
 
-          <div className="prf-stats">
-            <div className="prf-stat">
-              <span className="prf-stat-val">{tripCount}</span>
-              <span className="prf-stat-key">Trips</span>
+          {/* Stats */}
+          <div className="prf2-stats">
+            <div className="prf2-stat">
+              <span className="prf2-stat__val">{tripCount}</span>
+              <span className="prf2-stat__key">Trips</span>
             </div>
-            <div className="prf-stat-div" />
-            <div className="prf-stat">
-              <span className="prf-stat-val">{favCount}</span>
-              <span className="prf-stat-key">Saved</span>
+            <div className="prf2-stat__div"/>
+            <div className="prf2-stat">
+              <span className="prf2-stat__val">{favCount}</span>
+              <span className="prf2-stat__key">Saved</span>
             </div>
-            <div className="prf-stat-div" />
-            <div className="prf-stat">
-              <span className="prf-stat-val">{user?.rating || '—'}</span>
-              <span className="prf-stat-key">Rating</span>
+            <div className="prf2-stat__div"/>
+            <div className="prf2-stat">
+              <span className="prf2-stat__val">{user?.rating || '—'}</span>
+              <span className="prf2-stat__key">Rating</span>
             </div>
           </div>
         </div>
 
-        {/* Menu */}
-        <div style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 0 }}>
-          <div className="card" style={{ overflow: 'hidden' }}>
-            {menu.map((item, i) => (
+        {/* ── Menu ─────────────────────────── */}
+        <div className="prf2-section">
+          <div className="prf2-card">
+            {MENU.map((item, i) => (
               <div key={i}>
-                <button className="prf-menu-item" onClick={() => navigate(item.path)}>
-                  <div>
-                    <div className="prf-menu-label">{item.label}</div>
-                    <div className="prf-menu-sub">{item.sub}</div>
+                <button className="prf2-menu-item" onClick={() => navigate(item.path)}>
+                  <div className="prf2-menu-item__icon">{item.icon}</div>
+                  <div className="prf2-menu-item__text">
+                    <div className="prf2-menu-item__label">{item.label}</div>
+                    <div className="prf2-menu-item__sub">{item.sub}</div>
                   </div>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
                     <path d="M9 18l6-6-6-6"/>
                   </svg>
                 </button>
-                {i < menu.length - 1 && <div className="divider" style={{ margin: '0 16px' }} />}
+                {i < MENU.length - 1 && <div className="prf2-divider"/>}
               </div>
             ))}
           </div>
-
-          <button className="btn btn--danger btn--full" style={{ marginTop: 16 }}
-            onClick={() => { logout(); navigate('/'); }}>
-            Sign Out
-          </button>
-
-          {/* Secret admin access - tap version 5 times */}
-          <p
-            onClick={handleVersionTap}
-            style={{ textAlign: 'center', fontSize: 11, color: 'var(--gray-400)', marginTop: 12, cursor: 'default', userSelect: 'none' }}>
-            MoveOn Go · v1.0.0 · Made in India
-          </p>
-
-          {/* Admin button appears after 5 taps */}
-          {adminTap >= 5 && (
-            <button
-              className="btn btn--ghost btn--full"
-              style={{ marginTop: 8, fontSize: 13, color: 'var(--gray-400)', border: '1px solid var(--gray-700)' }}
-              onClick={() => navigate('/admin')}>
-              🔐 Admin Access
-            </button>
-          )}
-
         </div>
+
+        {/* ── Sign out ─────────────────────── */}
+        <div className="prf2-section">
+          <button className="prf2-signout" onClick={handleLogout}>
+            <span>Sign Out</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/>
+            </svg>
+          </button>
+        </div>
+
+        {/* ── Footer / secret admin ────────── */}
+        <p className="prf2-version" onClick={handleVersionTap}>
+          MoveOn Go · v1.0.0 · Made in Odisha 🇮🇳
+        </p>
+
+        {adminTap >= 5 && (
+          <div className="prf2-section" style={{paddingTop:0}}>
+            <button className="prf2-admin-btn" onClick={() => navigate('/admin')}>
+              🔐 Admin Panel
+            </button>
+          </div>
+        )}
+
       </div>
-      <BottomNav />
+      <BottomNav/>
     </div>
   );
 }

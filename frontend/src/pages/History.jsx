@@ -2,109 +2,227 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Header from '../components/Header';
 import BottomNav from '../components/BottomNav';
-import { getTrips, clearTrips } from '../services/storage';
+import api from '../services/api';
+import { getToken } from '../services/storage';
 import './History.css';
 
-const TYPE_LABEL = { bus: 'Bus', auto: 'Auto', cab: 'Cab', bike: 'Bike' };
+const TYPE_META = {
+  bus:  { emoji: '🚌', label: 'Bus',  color: '#1565C0', bg: '#E3F2FD' },
+  auto: { emoji: '🛺', label: 'Auto', color: '#E65100', bg: '#FFF3E0' },
+  cab:  { emoji: '🚕', label: 'Cab',  color: '#1B5E20', bg: '#E8F5E9' },
+  bike: { emoji: '🏍️', label: 'Bike', color: '#4A148C', bg: '#F3E5F5' },
+};
 
-function timeAgo(ts) {
-  const d = Date.now() - ts;
-  const m = Math.floor(d / 60000);
-  if (m < 60)  return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24)  return `${h}h ago`;
-  const days = Math.floor(h / 24);
-  if (days < 7) return `${days}d ago`;
-  return new Date(ts).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+const STATUS_META = {
+  completed: { label: 'Completed', color: '#00A046', bg: '#E6F4EC' },
+  cancelled: { label: 'Cancelled', color: '#D32F2F', bg: '#FFEBEE' },
+  searching: { label: 'Searching', color: '#F57C00', bg: '#FFF3E0' },
+  accepted:  { label: 'Accepted',  color: '#1565C0', bg: '#E3F2FD' },
+  started:   { label: 'Ongoing',   color: '#6A1B9A', bg: '#F3E5F5' },
+};
+
+function formatDate(dateStr) {
+  const d = new Date(dateStr);
+  const now = new Date();
+  const diff = now - d;
+  const mins = Math.floor(diff / 60000);
+  const hrs  = Math.floor(mins / 60);
+  const days = Math.floor(hrs / 24);
+  if (mins < 60)  return `${mins}m ago`;
+  if (hrs  < 24)  return `${hrs}h ago`;
+  if (days < 7)   return `${days}d ago`;
+  return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: days > 365 ? 'numeric' : undefined });
+}
+
+function Skeleton() {
+  return (
+    <div className="hist2-skeleton">
+      {[1,2,3].map(i => (
+        <div key={i} className="hist2-skeleton__card">
+          <div className="hist2-skeleton__row">
+            <div className="hist2-skeleton__badge"/>
+            <div className="hist2-skeleton__line hist2-skeleton__line--lg"/>
+            <div className="hist2-skeleton__line hist2-skeleton__line--sm"/>
+          </div>
+          <div className="hist2-skeleton__line hist2-skeleton__line--md" style={{marginTop:8}}/>
+          <div className="hist2-skeleton__line hist2-skeleton__line--sm" style={{marginTop:6}}/>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export default function History() {
   const navigate = useNavigate();
-  const [trips, setTrips] = useState([]);
+  const [bookings, setBookings] = useState([]);
+  const [loading,  setLoading]  = useState(true);
+  const [error,    setError]    = useState('');
+  const [filter,   setFilter]   = useState('all'); // all | completed | cancelled
 
-  useEffect(() => { setTrips(getTrips()); }, []);
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      setError('');
+      try {
+        const token = getToken();
+        if (!token) { setError('Please sign in to view history.'); setLoading(false); return; }
+        const data = await api.getBookings(token);
+        setBookings(data.bookings || []);
+      } catch {
+        setError('Could not load trip history. Check your connection.');
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
 
-  const totalSpent = trips
-    .filter(t => t.status !== 'cancelled')
-    .reduce((s, t) => s + parseInt((t.fare || '0').replace(/\D/g, '') || 0), 0);
+  const filtered = filter === 'all'
+    ? bookings
+    : bookings.filter(b => b.status === filter);
 
-  const handleClear = () => {
-    if (!window.confirm('Clear all trip history?')) return;
-    clearTrips();
-    setTrips([]);
-  };
+  const completed  = bookings.filter(b => b.status === 'completed');
+  const totalSpent = completed.reduce((s, b) => s + (b.fareAmount || 0), 0);
 
   return (
     <div className="app">
       <Header title="Trip History" showBack onBack={() => navigate(-1)} />
-      <div className="page">
+      <div className="page hist2-page">
 
-        {/* Summary strip */}
-        {trips.length > 0 && (
-          <div className="hist-strip">
-            <div className="hist-strip-item">
-              <span className="hist-strip-val">{trips.length}</span>
-              <span className="hist-strip-key">Total Trips</span>
+        {/* ── Summary strip ─────────────────── */}
+        {!loading && bookings.length > 0 && (
+          <div className="hist2-strip">
+            <div className="hist2-strip__item">
+              <span className="hist2-strip__val">{bookings.length}</span>
+              <span className="hist2-strip__key">Total Trips</span>
             </div>
-            <div className="hist-strip-div" />
-            <div className="hist-strip-item">
-              <span className="hist-strip-val">₹{totalSpent}</span>
-              <span className="hist-strip-key">Total Spent</span>
+            <div className="hist2-strip__div"/>
+            <div className="hist2-strip__item">
+              <span className="hist2-strip__val">₹{totalSpent}</span>
+              <span className="hist2-strip__key">Total Spent</span>
             </div>
-            <div className="hist-strip-div" />
-            <div className="hist-strip-item">
-              <span className="hist-strip-val">{trips.filter(t => t.status !== 'cancelled').length}</span>
-              <span className="hist-strip-key">Completed</span>
+            <div className="hist2-strip__div"/>
+            <div className="hist2-strip__item">
+              <span className="hist2-strip__val">{completed.length}</span>
+              <span className="hist2-strip__key">Completed</span>
             </div>
           </div>
         )}
 
-        <div style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {trips.length === 0 ? (
-            <div className="empty" style={{ paddingTop: 80 }}>
-              <div className="empty__icon">📋</div>
-              <div className="empty__title">No trips yet</div>
-              <div className="empty__sub">Your completed trips will appear here</div>
-              <button className="btn btn--primary" style={{ marginTop: 20 }} onClick={() => navigate('/book')}>
-                Book a Ride
+        {/* ── Filter chips ──────────────────── */}
+        {!loading && bookings.length > 0 && (
+          <div className="hist2-filters">
+            {['all','completed','cancelled'].map(f => (
+              <button key={f}
+                className={`hist2-chip ${filter === f ? 'active' : ''}`}
+                onClick={() => setFilter(f)}>
+                {f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)}
               </button>
+            ))}
+          </div>
+        )}
+
+        {/* ── Loading ───────────────────────── */}
+        {loading && <Skeleton/>}
+
+        {/* ── Error ────────────────────────── */}
+        {!loading && error && (
+          <div className="hist2-error">
+            <span>⚠️</span> {error}
+          </div>
+        )}
+
+        {/* ── Empty state ───────────────────── */}
+        {!loading && !error && filtered.length === 0 && (
+          <div className="hist2-empty">
+            <div className="hist2-empty__emoji">
+              {filter === 'cancelled' ? '❌' : '🛺'}
             </div>
-          ) : (
-            <>
-              {trips.map((trip, i) => (
-                <div key={trip.id || i} className="card hist-card">
-                  <div className="hist-card-top">
-                    <div className="hist-type-badge">{TYPE_LABEL[trip.type] || 'Ride'}</div>
-                    <div className="hist-route">
-                      <span className="hist-from">{trip.pickup}</span>
-                      <svg width="14" height="8" viewBox="0 0 24 12" fill="none"><path d="M0 6h20M14 1l6 5-6 5" stroke="currentColor" strokeWidth="2"/></svg>
-                      <span className="hist-to">{trip.dropoff}</span>
+            <div className="hist2-empty__title">
+              {filter === 'all' ? 'No trips yet' : `No ${filter} trips`}
+            </div>
+            <div className="hist2-empty__sub">
+              {filter === 'all'
+                ? 'Your completed trips will appear here'
+                : `You have no ${filter} trips`}
+            </div>
+            {filter === 'all' && (
+              <button className="btn btn--primary" style={{marginTop:20}}
+                onClick={() => navigate('/book')}>
+                Book Your First Ride
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* ── Trip list ────────────────────── */}
+        {!loading && !error && filtered.length > 0 && (
+          <div className="hist2-list">
+            {filtered.map((b, i) => {
+              const meta   = TYPE_META[b.vehicleType]   || TYPE_META.auto;
+              const status = STATUS_META[b.status]      || STATUS_META.completed;
+              return (
+                <div key={b._id || i} className="hist2-card">
+                  {/* Top row */}
+                  <div className="hist2-card__top">
+                    <div className="hist2-card__badge"
+                      style={{background: meta.bg, color: meta.color}}>
+                      {meta.emoji} {meta.label}
                     </div>
-                    <div className="hist-fare">{trip.fare}</div>
+                    <div className="hist2-card__fare">
+                      {b.fareAmount ? `₹${b.fareAmount}` : b.fare || '—'}
+                    </div>
                   </div>
-                  <div className="hist-card-btm">
-                    <span className={`badge ${trip.status === 'cancelled' ? 'badge--red' : 'badge--green'}`}>
-                      {trip.status === 'cancelled' ? 'Cancelled' : 'Completed'}
+
+                  {/* Route */}
+                  <div className="hist2-card__route">
+                    <div className="hist2-card__route-row">
+                      <div className="hist2-card__dot hist2-card__dot--green"/>
+                      <span className="hist2-card__place">{b.pickup}</span>
+                    </div>
+                    <div className="hist2-card__route-line"/>
+                    <div className="hist2-card__route-row">
+                      <div className="hist2-card__dot hist2-card__dot--red"/>
+                      <span className="hist2-card__place">{b.dropoff}</span>
+                    </div>
+                  </div>
+
+                  {/* Bottom row */}
+                  <div className="hist2-card__bottom">
+                    <span className="hist2-card__status"
+                      style={{background: status.bg, color: status.color}}>
+                      {status.label}
                     </span>
-                    {trip.distance && <span className="hist-meta">{trip.distance}</span>}
-                    {trip.duration && <span className="hist-meta">{trip.duration}</span>}
-                    <span className="hist-time">{timeAgo(trip.ts)}</span>
-                    {trip.status !== 'cancelled' && (
-                      <button className="hist-rebook" onClick={() => navigate(`/book?type=${trip.type}`)}>
+                    {b.distance && (
+                      <span className="hist2-card__meta">📏 {b.distance}</span>
+                    )}
+                    {b.duration && (
+                      <span className="hist2-card__meta">⏱ {b.duration}</span>
+                    )}
+                    <span className="hist2-card__time">
+                      {formatDate(b.createdAt)}
+                    </span>
+                    {b.status === 'completed' && (
+                      <button className="hist2-card__rebook"
+                        onClick={() => navigate(`/book?type=${b.vehicleType}`)}>
                         Rebook
                       </button>
                     )}
                   </div>
+
+                  {/* Payment method */}
+                  {b.payment && (
+                    <div className="hist2-card__payment">
+                      💳 Paid via {b.payment}
+                    </div>
+                  )}
                 </div>
-              ))}
-              <button className="btn btn--ghost btn--full" style={{ marginTop: 8, color: 'var(--danger)', fontSize: 13 }} onClick={handleClear}>
-                Clear History
-              </button>
-            </>
-          )}
-        </div>
+              );
+            })}
+          </div>
+        )}
+
       </div>
-      <BottomNav />
+      <BottomNav/>
     </div>
   );
 }

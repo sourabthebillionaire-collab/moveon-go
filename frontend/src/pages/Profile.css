@@ -1,38 +1,324 @@
-.prf-hero {
-  background: linear-gradient(150deg, var(--blue-900) 0%, var(--blue-800) 100%);
-  padding: 24px 16px 28px;
-  display: flex; flex-direction: column; align-items: center; text-align: center;
+/* ── Profile.css — MoveOn Go ── */
+
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+
+.prf2-page {
+  padding-bottom: 80px;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  background: #F8FAFC;
 }
-.prf-avatar {
-  width: 76px; height: 76px; border-radius: 50%;
-  background: var(--yellow-400); color: var(--blue-900);
-  font-size: 36px; font-weight: 800;
+
+/* ── Hero ──────────────────────────────── */
+.prf2-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 28px 20px 20px;
+  background: linear-gradient(160deg, #0D47A1 0%, #1565C0 60%, #00A046 100%);
+  position: relative;
+  overflow: hidden;
+}
+.prf2-hero::before {
+  content: '';
+  position: absolute;
+  top: -40px; right: -40px;
+  width: 180px; height: 180px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.05);
+}
+.prf2-hero::after {
+  content: '';
+  position: absolute;
+  bottom: -20px; left: -20px;
+  width: 120px; height: 120px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.04);
+}
+
+/* Avatar */
+.prf2-avatar {
+  position: relative;
+  width: 80px; height: 80px;
+  margin-bottom: 14px;
+}
+.prf2-avatar__initials {
+  width: 80px; height: 80px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.2);
+  backdrop-filter: blur(8px);
+  border: 3px solid rgba(255,255,255,0.4);
   display: flex; align-items: center; justify-content: center;
-  border: 3px solid rgba(255,255,255,0.25); margin-bottom: 12px;
+  font-size: 28px;
+  font-weight: 800;
+  color: white;
+  letter-spacing: 1px;
 }
-.prf-name   { font-size: 20px; font-weight: 800; color: white; }
-.prf-phone  { font-size: 13px; color: rgba(255,255,255,0.6); margin-top: 3px; }
-.prf-edit-form { width: 100%; }
+.prf2-avatar__ring {
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 2px dashed rgba(255,255,255,0.3);
+  animation: prf2-spin 12s linear infinite;
+}
+@keyframes prf2-spin { to { transform: rotate(360deg); } }
 
-.prf-stats {
-  display: flex; align-items: center;
-  background: rgba(255,255,255,0.1);
-  border: 1px solid rgba(255,255,255,0.15);
-  border-radius: var(--radius); padding: 12px 16px;
-  gap: 8px; width: 100%; margin-top: 16px;
+.prf2-name {
+  font-size: 20px;
+  font-weight: 800;
+  color: white;
+  margin-bottom: 4px;
+  text-align: center;
 }
-.prf-stat      { flex: 1; text-align: center; }
-.prf-stat-val  { display: block; font-size: 18px; font-weight: 800; color: white; line-height: 1; }
-.prf-stat-key  { display: block; font-size: 10px; color: rgba(255,255,255,0.6); margin-top: 3px; }
-.prf-stat-div  { width: 1px; height: 28px; background: rgba(255,255,255,0.2); }
+.prf2-phone,
+.prf2-email {
+  font-size: 13px;
+  color: rgba(255,255,255,0.75);
+  margin-bottom: 2px;
+}
 
-.prf-menu-item {
-  width: 100%; display: flex; align-items: center; justify-content: space-between;
-  padding: 14px 16px; background: none; border: none; cursor: pointer;
-  font-family: inherit; text-align: left; transition: background 0.15s;
-  color: var(--gray-900);
+.prf2-edit-btn {
+  margin-top: 10px;
+  padding: 6px 18px;
+  background: rgba(255,255,255,0.15);
+  border: 1.5px solid rgba(255,255,255,0.3);
+  border-radius: 99px;
+  color: white;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.15s;
+  backdrop-filter: blur(4px);
 }
-.prf-menu-item:hover { background: var(--gray-100); }
-.prf-menu-item svg { color: var(--gray-400); flex-shrink: 0; }
-.prf-menu-label { font-size: 14px; font-weight: 600; color: var(--gray-900); }
-.prf-menu-sub   { font-size: 12px; color: var(--gray-400); margin-top: 2px; }
+.prf2-edit-btn:hover { background: rgba(255,255,255,0.25); }
+
+/* Edit form */
+.prf2-edit-form {
+  width: 100%;
+  max-width: 320px;
+  margin-top: 8px;
+}
+.prf2-edit-field {
+  margin-bottom: 10px;
+}
+.prf2-edit-field label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.8);
+  margin-bottom: 4px;
+}
+.prf2-input {
+  width: 100%;
+  height: 42px;
+  background: rgba(255,255,255,0.15);
+  border: 1.5px solid rgba(255,255,255,0.3);
+  border-radius: 10px;
+  padding: 0 12px;
+  font-size: 14px;
+  color: white;
+  font-family: inherit;
+  outline: none;
+  box-sizing: border-box;
+  transition: all 0.15s;
+  backdrop-filter: blur(4px);
+}
+.prf2-input::placeholder { color: rgba(255,255,255,0.5); }
+.prf2-input:focus {
+  border-color: rgba(255,255,255,0.6);
+  background: rgba(255,255,255,0.2);
+}
+
+.prf2-save-err {
+  font-size: 12px;
+  color: #FFCDD2;
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  background: rgba(211,47,47,0.2);
+  border-radius: 8px;
+}
+.prf2-save-ok {
+  font-size: 12px;
+  color: #C8E6C9;
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  background: rgba(0,160,70,0.2);
+  border-radius: 8px;
+  text-align: center;
+}
+
+.prf2-edit-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+.prf2-btn {
+  flex: 1;
+  height: 40px;
+  border-radius: 10px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  border: none;
+  display: flex; align-items: center; justify-content: center;
+  gap: 6px;
+  transition: all 0.15s;
+}
+.prf2-btn--ghost {
+  background: rgba(255,255,255,0.12);
+  color: rgba(255,255,255,0.8);
+  border: 1.5px solid rgba(255,255,255,0.2);
+}
+.prf2-btn--primary {
+  background: white;
+  color: #0D47A1;
+}
+.prf2-btn--primary:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.prf2-spinner {
+  width: 14px; height: 14px;
+  border: 2px solid rgba(13,71,161,0.2);
+  border-top-color: #0D47A1;
+  border-radius: 50%;
+  animation: prf2-spin2 0.7s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes prf2-spin2 { to { transform: rotate(360deg); } }
+
+/* Stats */
+.prf2-stats {
+  display: flex;
+  align-items: center;
+  background: rgba(255,255,255,0.12);
+  border: 1.5px solid rgba(255,255,255,0.2);
+  border-radius: 14px;
+  padding: 14px 0;
+  width: 100%;
+  max-width: 320px;
+  margin-top: 16px;
+  backdrop-filter: blur(4px);
+}
+.prf2-stat {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.prf2-stat__val {
+  font-size: 20px;
+  font-weight: 800;
+  color: white;
+}
+.prf2-stat__key {
+  font-size: 11px;
+  color: rgba(255,255,255,0.65);
+  font-weight: 500;
+}
+.prf2-stat__div {
+  width: 1px;
+  height: 30px;
+  background: rgba(255,255,255,0.2);
+}
+
+/* ── Section ───────────────────────────── */
+.prf2-section {
+  padding: 12px 16px 0;
+}
+
+/* ── Card ──────────────────────────────── */
+.prf2-card {
+  background: white;
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+  border: 1px solid #F1F5F9;
+}
+
+/* ── Menu item ─────────────────────────── */
+.prf2-menu-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  transition: background 0.12s;
+  color: inherit;
+}
+.prf2-menu-item:hover { background: #F8FAFC; }
+.prf2-menu-item:active { background: #F1F5F9; }
+
+.prf2-menu-item__icon {
+  font-size: 20px;
+  width: 36px; height: 36px;
+  background: #F8FAFC;
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.prf2-menu-item__text { flex: 1; }
+.prf2-menu-item__label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #0F172A;
+  margin-bottom: 1px;
+}
+.prf2-menu-item__sub {
+  font-size: 12px;
+  color: #94A3B8;
+}
+
+.prf2-divider {
+  height: 1px;
+  background: #F1F5F9;
+  margin: 0 16px;
+}
+
+/* ── Sign out ──────────────────────────── */
+.prf2-signout {
+  width: 100%;
+  height: 50px;
+  background: white;
+  border: 1.5px solid #FFCDD2;
+  border-radius: 14px;
+  color: #D32F2F;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+  display: flex; align-items: center; justify-content: center;
+  gap: 8px;
+  transition: all 0.15s;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+}
+.prf2-signout:hover { background: #FFEBEE; }
+
+/* ── Version / admin ───────────────────── */
+.prf2-version {
+  text-align: center;
+  font-size: 11.5px;
+  color: #94A3B8;
+  margin: 14px 0 8px;
+  cursor: default;
+  user-select: none;
+}
+.prf2-admin-btn {
+  width: 100%;
+  height: 44px;
+  background: #0F172A;
+  color: #94A3B8;
+  border: none;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s;
+}
+.prf2-admin-btn:hover { background: #1E293B; }
