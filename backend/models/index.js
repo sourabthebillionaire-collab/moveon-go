@@ -19,6 +19,13 @@ const driverSchema = new mongoose.Schema({
   pinHash:       { type: String, required: true },
   address:       { type: String, trim: true, default: '' },
   licenseNumber: { type: String, trim: true, default: '' },
+
+  // ✅ Bus-specific fields — only used when vehicleType === 'bus'
+  busName:       { type: String, trim: true, default: '' }, // e.g. "Bhubaneswar Express"
+  routeFrom:     { type: String, trim: true, default: '' }, // e.g. "Bhubaneswar"
+  routeTo:       { type: String, trim: true, default: '' }, // e.g. "Cuttack"
+  routeNumber:   { type: String, trim: true, default: '' }, // e.g. "Route 12"
+
   isApproved:    { type: Boolean, default: false },
   isActive:      { type: Boolean, default: true },
   rating:        { type: Number, default: 5.0 },
@@ -37,7 +44,7 @@ const driverSchema = new mongoose.Schema({
 const bookingSchema = new mongoose.Schema({
   userId:        { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   driverId:      { type: mongoose.Schema.Types.ObjectId, ref: 'Driver' },
-  vehicleType:   { type: String, enum: ['auto', 'cab', 'bike'], required: true },
+  vehicleType:   { type: String, enum: ['auto', 'cab', 'bike', 'bus'], required: true },
   pickup:        { type: String, required: true },
   pickupLat:     { type: Number },
   pickupLng:     { type: Number },

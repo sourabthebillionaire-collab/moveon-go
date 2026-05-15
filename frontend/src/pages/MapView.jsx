@@ -174,11 +174,16 @@ export default function MapView() {
   }
 
   function buildPopup(v) {
-    return `<div style="font-family:Inter,sans-serif;font-size:12px;min-width:140px;line-height:1.5">
-      <div style="font-weight:700;margin-bottom:4px">${v.vehicleNumber || v.number || ''}</div>
-      ${v.from && v.to ? `<div style="color:#6B7280">${v.from} → ${v.to}</div>` : ''}
-      <div style="color:#6B7280">Speed: ${v.speed || 0} km/h</div>
-      <div style="color:#6B7280">Status: ${v.status || 'Active'}</div>
+    const isBus   = v.type === 'bus';
+    const title   = isBus && v.busName ? v.busName : (v.vehicleNumber || v.number || '');
+    const route   = isBus && v.routeFrom && v.routeTo ? `${v.routeFrom} → ${v.routeTo}` : (v.from && v.to ? `${v.from} → ${v.to}` : '');
+    const routeNo = isBus && v.routeNumber ? `Route ${v.routeNumber} · ` : '';
+
+    return `<div style="font-family:Inter,sans-serif;font-size:12px;min-width:160px;line-height:1.6">
+      <div style="font-weight:700;font-size:13px;margin-bottom:2px;color:#0D47A1">${title}</div>
+      ${v.vehicleNumber ? `<div style="color:#94A3B8;font-size:11px;margin-bottom:4px">${v.vehicleNumber}</div>` : ''}
+      ${route ? `<div style="color:#374151;font-size:12px;margin-bottom:2px">🛣 ${routeNo}${route}</div>` : ''}
+      <div style="color:#6B7280">⚡ ${v.speed || 0} km/h &nbsp;·&nbsp; ${v.status || 'Active'}</div>
     </div>`;
   }
 

@@ -1,13 +1,13 @@
 const { Driver } = require('../models');
 
 module.exports = function initSocket(io) {
-  const connectedDrivers      = new Map(); // socketId → driverId
-  const activeVehiclePositions = new Map(); // driverId → latest position data ✅ NEW
+  const connectedDrivers       = new Map(); // socketId → driverId
+  const activeVehiclePositions = new Map(); // driverId → latest position
 
   io.on('connection', (socket) => {
     console.log(`[Socket] Connected: ${socket.id}`);
 
-    // ✅ NEW — rider asks for snapshot of all currently active vehicles
+    // Rider connects — send snapshot of all active vehicles immediately
     socket.on('rider:connected', () => {
       const snapshot = Array.from(activeVehiclePositions.values());
       socket.emit('vehicles:snapshot', snapshot);
@@ -20,13 +20,18 @@ module.exports = function initSocket(io) {
     });
 
     socket.on('driver:location', async (data) => {
-      const { driverId, lat, lng, bearing, speed, status, type, vehicleNumber, number } = data;
+      const { driverId, lat, lng, bearing, speed, status, type, vehicleNumber, busName, routeFrom, routeTo, routeNumber } = data;
       if (!lat || !lng) return;
 
-      // ✅ Cache latest position so new riders get it in snapshot
+      // ✅ Cache latest position including bus name and route
       activeVehiclePositions.set(String(driverId), {
         id: driverId, lat, lng, bearing, speed, status,
-        type, vehicleNumber, number, ts: Date.now(),
+        type, vehicleNumber,
+        busName:     busName     || '',
+        routeFrom:   routeFrom   || '',
+        routeTo:     routeTo     || '',
+        routeNumber: routeNumber || '',
+        ts: Date.now(),
       });
 
       try {
@@ -41,8 +46,16 @@ module.exports = function initSocket(io) {
         });
       } catch {}
 
-      // Broadcast single vehicle update to everyone
-      io.emit('vehicles:update', { id: driverId, lat, lng, bearing, speed, status, type, vehicleNumber, number, ts: Date.now() });
+      // ✅ Broadcast with bus name and route info so map popup shows it
+      io.emit('vehicles:update', {
+        id: driverId, lat, lng, bearing, speed, status,
+        type, vehicleNumber,
+        busName:     busName     || '',
+        routeFrom:   routeFrom   || '',
+        routeTo:     routeTo     || '',
+        routeNumber: routeNumber || '',
+        ts: Date.now(),
+      });
 
       if (status === 'SOS') {
         console.warn(`[SOS] Driver ${driverId} at ${lat},${lng}`);
@@ -58,7 +71,7 @@ module.exports = function initSocket(io) {
       const driverId = connectedDrivers.get(socket.id);
       if (driverId) {
         connectedDrivers.delete(socket.id);
-        activeVehiclePositions.delete(String(driverId)); // ✅ Remove from snapshot cache
+        activeVehiclePositions.delete(String(driverId));
         try {
           await Driver.updateOne({ _id: driverId }, { status: 'offline', onDuty: false });
           io.emit('driver:offline', { driverId });
@@ -79,7 +92,7 @@ module.exports = function initSocket(io) {
       });
       for (const d of stale) {
         await Driver.updateOne({ _id: d._id }, { status: 'offline', onDuty: false });
-        activeVehiclePositions.delete(String(d._id)); // ✅ Remove from snapshot cache
+        activeVehiclePositions.delete(String(d._id));
         io.emit('driver:offline', { driverId: d._id });
       }
     } catch {}

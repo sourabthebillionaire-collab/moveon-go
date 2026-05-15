@@ -293,29 +293,35 @@ export default function Driver() {
     speak(t.gpsActive, lang);
     try { await api.setDriverDuty(true, getDriverToken()); } catch {}
 
+    // Build base payload including bus name and route for map popup display
+    const basePayload = {
+      driverId:    driver?.id || driver?._id,
+      vehicleId:   driver?.vehicleId,
+      type:        driver?.vehicleType,
+      vehicleNumber: driver?.vehicleNumber,
+      busName:     driver?.busName     || '',
+      routeFrom:   driver?.routeFrom   || '',
+      routeTo:     driver?.routeTo     || '',
+      routeNumber: driver?.routeNumber || '',
+    };
+
     unwatchRef.current = watchPosition(pos => {
       setGpsPos(pos);
       setSpeed(Math.round((pos.speed || 0) * 3.6));
       emitLocation({
-        driverId: driver?.id || driver?._id,
-        vehicleId: driver?.vehicleId,
+        ...basePayload,
         lat: pos.lat, lng: pos.lng,
         bearing: pos.bearing || 0,
         speed: Math.round((pos.speed || 0) * 3.6),
         status: 'active',
-        type: driver?.vehicleType,
-        vehicleNumber: driver?.vehicleNumber,
       });
     });
 
     pingRef.current = setInterval(() => {
       if (gpsPos) emitLocation({
-        driverId: driver?.id || driver?._id,
-        vehicleId: driver?.vehicleId,
+        ...basePayload,
         lat: gpsPos.lat, lng: gpsPos.lng,
         status: 'active',
-        type: driver?.vehicleType,
-        vehicleNumber: driver?.vehicleNumber,
       });
     }, 10000);
   };
