@@ -36,11 +36,11 @@
   --white:    #FFFFFF;
 
   /* Semantic */
-  --danger:      #DC2626;
-  --danger-bg:   #FEF2F2;
+  --danger:       #DC2626;
+  --danger-bg:    #FEF2F2;
   --danger-border:#FECACA;
-  --success:     var(--green-600);
-  --warning:     var(--yellow-600);
+  --success:      var(--green-600);
+  --warning:      var(--yellow-600);
 
   /* Layout */
   --header-h:  56px;
@@ -53,40 +53,92 @@
   --shadow-lg: 0 10px 30px rgba(0,0,0,0.14);
 }
 
-html, body, #root {
+/* ── SCROLL LOCK — makes app feel native ── */
+html {
   height: 100%;
+  height: 100dvh;
+  overflow: hidden;
+  overscroll-behavior: none;
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
   font-size: 14px;
   line-height: 1.5;
   color: var(--gray-900);
-  background: var(--gray-100);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Scrollbar */
-::-webkit-scrollbar { width: 3px; height: 3px; }
-::-webkit-scrollbar-thumb { background: var(--gray-200); border-radius: 4px; }
+body {
+  height: 100%;
+  height: 100dvh;
+  overflow: hidden;
+  overscroll-behavior: none;
+  background: var(--gray-100);
+}
 
-/* App shell */
+#root {
+  height: 100%;
+  height: 100dvh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── App shell — full screen, no overflow ── */
 .app {
   max-width: 480px;
   margin: 0 auto;
-  min-height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;       /* ← locks the shell */
   background: var(--gray-100);
   position: relative;
-  overflow-x: hidden;
 }
 
+/* ── Page — only this scrolls ────────────── */
 .page {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
   padding-top: var(--header-h);
   padding-bottom: calc(var(--nav-h) + 8px);
-  min-height: 100vh;
 }
+.page::-webkit-scrollbar { display: none; }
+.page { scrollbar-width: none; }
 
 .page--full {
   padding-top: 0;
   padding-bottom: 0;
+}
+
+/* ── Auth pages — can scroll if content tall */
+.login-page,
+.dreg2-page,
+.drv-auth-page {
+  height: 100dvh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+}
+.login-page::-webkit-scrollbar,
+.dreg2-page::-webkit-scrollbar,
+.drv-auth-page::-webkit-scrollbar { display: none; }
+
+/* ── Map page — never scrolls ─────────────  */
+.map-page {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-top: var(--header-h);
+}
+.map-canvas {
+  flex: 1;
+  min-height: 0;
+  z-index: 1;
 }
 
 /* Card */
@@ -149,7 +201,6 @@ html, body, #root {
 }
 
 .btn--full { width: 100%; }
-
 .btn--lg {
   padding: 15px 24px;
   font-size: 15px;
@@ -183,17 +234,14 @@ html, body, #root {
   font-size: 11px;
   font-weight: 600;
 }
-.badge--green  { background: var(--green-100); color: var(--green-700); }
-.badge--blue   { background: var(--blue-100);  color: var(--blue-800); }
-.badge--yellow { background: var(--yellow-100);color: var(--yellow-600); }
-.badge--red    { background: var(--danger-bg); color: var(--danger); }
-.badge--gray   { background: var(--gray-100);  color: var(--gray-500); }
+.badge--green  { background: var(--green-100);  color: var(--green-700);  }
+.badge--blue   { background: var(--blue-100);   color: var(--blue-800);   }
+.badge--yellow { background: var(--yellow-100); color: var(--yellow-600); }
+.badge--red    { background: var(--danger-bg);  color: var(--danger);     }
+.badge--gray   { background: var(--gray-100);   color: var(--gray-500);   }
 
 /* Divider */
-.divider {
-  height: 1px;
-  background: var(--gray-200);
-}
+.divider { height: 1px; background: var(--gray-200); }
 
 /* Empty state */
 .empty {
@@ -205,11 +253,11 @@ html, body, #root {
   text-align: center;
   gap: 8px;
 }
-.empty__icon { font-size: 40px; color: var(--gray-400); margin-bottom: 4px; }
+.empty__icon  { font-size: 40px; color: var(--gray-400); margin-bottom: 4px; }
 .empty__title { font-size: 15px; font-weight: 600; color: var(--gray-700); }
 .empty__sub   { font-size: 13px; color: var(--gray-400); line-height: 1.5; }
 
-/* Loader */
+/* Spinner */
 .spinner {
   width: 20px; height: 20px;
   border: 2px solid var(--gray-200);
@@ -230,10 +278,9 @@ html, body, #root {
 }
 
 /* Animations */
-@keyframes fadeIn   { from { opacity: 0; } to { opacity: 1; } }
-@keyframes slideUp  { from { transform: translateY(16px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-@keyframes slideInL { from { transform: translateX(-100%); } to { transform: translateX(0); } }
-@keyframes pulse    { 0%,100%{opacity:1;}50%{opacity:0.5;} }
+@keyframes fadeIn  { from { opacity: 0; }              to { opacity: 1; } }
+@keyframes slideUp { from { transform: translateY(16px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+@keyframes pulse   { 0%,100%{opacity:1;} 50%{opacity:0.5;} }
 
 .fade-in  { animation: fadeIn  0.2s ease; }
 .slide-up { animation: slideUp 0.25s ease; }
@@ -284,6 +331,10 @@ html, body, #root {
   color: var(--white);
   border-color: var(--blue-800);
 }
+
+/* Scrollbar (desktop) */
+::-webkit-scrollbar { width: 3px; height: 3px; }
+::-webkit-scrollbar-thumb { background: var(--gray-200); border-radius: 4px; }
 
 /* Leaflet overrides */
 .leaflet-container { font-family: inherit !important; }
