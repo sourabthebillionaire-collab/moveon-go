@@ -131,19 +131,20 @@
 .drv-numpad {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
+  gap: 12px;
   width: 100%;
 }
 .drv-numpad-key {
-  aspect-ratio: 1.6;
+  aspect-ratio: 1.4;
   display: flex; align-items: center; justify-content: center;
   background: var(--gray-100);
   border: none; border-radius: var(--radius-sm);
   font-family: inherit;
-  font-size: 20px; font-weight: 600;
+  font-size: 22px; font-weight: 600;
   color: var(--gray-900);
   cursor: pointer;
   transition: background 0.12s;
+  min-height: 56px;
 }
 .drv-numpad-key:hover:not(:disabled) { background: var(--blue-50); color: var(--blue-800); }
 .drv-numpad-key:active:not(:disabled) { background: var(--blue-100); transform: scale(0.97); }
@@ -201,13 +202,18 @@
   border-bottom: 1px solid var(--gray-200);
 }
 .drv-stat {
-  padding: 14px 8px; text-align: center;
+  padding: 16px 10px; text-align: center;
   border-right: 1px solid var(--gray-200);
+  min-height: 72px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
 }
 .drv-stat:last-child { border-right: none; }
-.drv-stat__val  { display: block; font-size: 20px; font-weight: 800; color: var(--blue-800); line-height: 1; }
-.drv-stat__unit { font-size: 10px; font-weight: 500; color: var(--gray-400); }
-.drv-stat__key  { display: block; font-size: 10px; color: var(--gray-400); margin-top: 4px; }
+.drv-stat__val  { display: block; font-size: 22px; font-weight: 800; color: var(--blue-800); line-height: 1; }
+.drv-stat__unit { font-size: 11px; font-weight: 500; color: var(--gray-400); }
+.drv-stat__key  { display: block; font-size: 11px; color: var(--gray-400); margin-top: 4px; }
 
 /* GPS bar */
 .drv-gps-bar {
@@ -219,13 +225,14 @@
 .drv-gps-coords { font-size: 10px; color: var(--green-700); opacity: 0.7; margin-left: auto; font-family: monospace; }
 
 /* Main duty button */
-.drv-main-action { padding: 16px; }
+.drv-main-action { padding: 18px 16px; }
 .drv-duty-btn {
-  width: 100%; padding: 18px;
+  width: 100%; padding: 20px;
   border: none; border-radius: var(--radius);
-  font-family: inherit; font-size: 17px; font-weight: 800;
+  font-family: inherit; font-size: 18px; font-weight: 800;
   letter-spacing: 0.3px; cursor: pointer;
   transition: all 0.15s; color: white;
+  min-height: 56px;
 }
 .drv-duty-btn:active { transform: scale(0.99); }
 .drv-duty-btn.start     { background: var(--green-600); }
@@ -235,16 +242,17 @@
 /* Secondary actions */
 .drv-actions {
   display: grid; grid-template-columns: repeat(3,1fr);
-  gap: 10px; padding: 0 16px;
+  gap: 12px; padding: 0 16px;
 }
 .drv-action-btn {
   display: flex; flex-direction: column; align-items: center;
-  gap: 6px; padding: 14px 8px;
+  gap: 8px; padding: 16px 10px;
   background: var(--white); border: 1px solid var(--gray-200);
   border-radius: var(--radius); cursor: pointer;
-  font-family: inherit; font-size: 11px; font-weight: 600;
+  font-family: inherit; font-size: 12px; font-weight: 600;
   color: var(--gray-700); transition: all 0.15s;
   box-shadow: var(--shadow-sm);
+  min-height: 64px;
 }
 .drv-action-btn:hover { background: var(--gray-100); }
 .drv-action-btn--sos {

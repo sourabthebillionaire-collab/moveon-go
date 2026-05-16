@@ -5,6 +5,7 @@ import Header from '../components/Header';
 import BottomNav from '../components/BottomNav';
 import api from '../services/api';
 import { useEffect } from 'react';
+import './BusList.css';
 
 export default function BusList() {
   const navigate = useNavigate();

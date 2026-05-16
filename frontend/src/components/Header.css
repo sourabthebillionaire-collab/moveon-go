@@ -10,6 +10,7 @@
   align-items: center;
   justify-content: space-between;
   padding: 0 12px;
+  padding-top: env(safe-area-inset-top, 0px);
   z-index: 50;
   box-shadow: 0 1px 0 rgba(0,0,0,0.04), 0 2px 8px rgba(0,0,0,0.04);
 }
@@ -22,9 +23,10 @@
 
 .header__left,
 .header__right {
-  width: 40px;
+  width: 44px;
   display: flex;
   align-items: center;
+  justify-content: center;
 }
 .header__right { justify-content: flex-end; }
 .header__center {
@@ -36,13 +38,15 @@
 
 /* Icon button */
 .header__icon-btn {
-  width: 36px; height: 36px;
+  width: 44px; height: 44px;
   display: flex; align-items: center; justify-content: center;
   background: none; border: none; cursor: pointer;
   color: #374151;
   border-radius: 10px;
   transition: background 0.15s;
   -webkit-tap-highlight-color: transparent;
+  font-size: 18px;
+  min-height: 44px;
 }
 .header__icon-btn:hover   { background: #F5F7FA; }
 .header__icon-btn:active  { background: #E5E9EF; transform: scale(0.95); }
@@ -55,13 +59,13 @@
   background: #374151;
   transition: all 0.2s;
 }
-.header__menu-btn span:nth-child(1) { width: 20px; height: 2px; }
-.header__menu-btn span:nth-child(2) { width: 14px; height: 2px; }
-.header__menu-btn span:nth-child(3) { width: 20px; height: 2px; }
+.header__menu-btn span:nth-child(1) { width: 20px; height: 2.5px; }
+.header__menu-btn span:nth-child(2) { width: 14px; height: 2.5px; }
+.header__menu-btn span:nth-child(3) { width: 20px; height: 2.5px; }
 
 /* Title */
 .header__title {
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 700;
   color: #0D1B2A;
   letter-spacing: -0.1px;
@@ -71,18 +75,18 @@
 .header__brand {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
 .header__logo-wrap {
-  width: 30px; height: 30px;
+  width: 32px; height: 32px;
   background: #EEF4FF;
   border-radius: 8px;
   display: flex; align-items: center; justify-content: center;
 }
 .header__brand-name {
-  font-size: 17px;
+  font-size: 18px;
   font-weight: 800;
   color: #0D47A1;
   letter-spacing: -0.4px;

@@ -3,7 +3,7 @@
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
 
 .hist2-page {
-  padding-bottom: 80px;
+  padding-bottom: 100px;
   font-family: 'Plus Jakarta Sans', sans-serif;
 }
 
@@ -12,9 +12,9 @@
   display: flex;
   align-items: center;
   background: linear-gradient(135deg, #0D47A1, #1565C0);
-  margin: 12px 16px;
+  margin: 16px;
   border-radius: 14px;
-  padding: 16px 0;
+  padding: 18px 0;
   box-shadow: 0 4px 16px rgba(13,71,161,0.25);
 }
 .hist2-strip__item {
@@ -22,15 +22,15 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
 }
 .hist2-strip__val {
-  font-size: 20px;
+  font-size: 22px;
   font-weight: 800;
   color: white;
 }
 .hist2-strip__key {
-  font-size: 11px;
+  font-size: 12px;
   color: rgba(255,255,255,0.7);
   font-weight: 500;
 }
@@ -43,20 +43,26 @@
 /* ── Filter chips ──────────────────────── */
 .hist2-filters {
   display: flex;
-  gap: 8px;
-  padding: 4px 16px 12px;
+  gap: 10px;
+  padding: 8px 16px 14px;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
+.hist2-filters::-webkit-scrollbar { display: none; }
 .hist2-chip {
-  padding: 6px 16px;
+  padding: 8px 18px;
   border-radius: 99px;
   border: 1.5px solid var(--gray-200, #E2E8F0);
   background: white;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--gray-500, #64748B);
   cursor: pointer;
   transition: all 0.15s;
   font-family: inherit;
+  white-space: nowrap;
+  flex-shrink: 0;
+  min-height: 40px;
 }
 .hist2-chip.active {
   background: #0D47A1;
@@ -119,21 +125,21 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 60px 24px;
+  padding: 80px 24px;
   text-align: center;
 }
 .hist2-empty__emoji {
-  font-size: 52px;
-  margin-bottom: 16px;
+  font-size: 56px;
+  margin-bottom: 18px;
 }
 .hist2-empty__title {
   font-size: 18px;
   font-weight: 700;
   color: #0F172A;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 }
 .hist2-empty__sub {
-  font-size: 14px;
+  font-size: 15px;
   color: #64748B;
 }
 
@@ -141,7 +147,7 @@
 .hist2-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   padding: 0 16px 16px;
 }
 
@@ -149,11 +155,15 @@
 .hist2-card {
   background: white;
   border-radius: 14px;
-  padding: 14px;
+  padding: 16px;
   border: 1px solid #F1F5F9;
   box-shadow: 0 1px 4px rgba(0,0,0,0.05);
   animation: hist2-fadeUp 0.25s ease both;
+  cursor: pointer;
+  transition: all 0.15s;
 }
+.hist2-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+.hist2-card:active { transform: scale(0.98); }
 @keyframes hist2-fadeUp {
   from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: translateY(0); }
@@ -163,27 +173,27 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 12px;
+  margin-bottom: 14px;
 }
 .hist2-card__badge {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 4px 10px;
+  padding: 6px 12px;
   border-radius: 99px;
   font-size: 12px;
   font-weight: 700;
 }
 .hist2-card__fare {
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 800;
   color: #00A046;
 }
 
 /* Route */
 .hist2-card__route {
-  margin-bottom: 12px;
-  padding: 10px 12px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
   background: #F8FAFC;
   border-radius: 10px;
 }
@@ -194,12 +204,12 @@
 }
 .hist2-card__route-line {
   width: 2px;
-  height: 14px;
+  height: 16px;
   background: #E2E8F0;
-  margin: 3px 0 3px 7px;
+  margin: 4px 0 4px 8px;
 }
 .hist2-card__dot {
-  width: 14px; height: 14px;
+  width: 16px; height: 16px;
   border-radius: 50%;
   flex-shrink: 0;
   border: 2px solid white;
@@ -208,7 +218,7 @@
 .hist2-card__dot--green { background: #00A046; color: #00A046; }
 .hist2-card__dot--red   { background: #D32F2F; color: #D32F2F; }
 .hist2-card__place {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: #0F172A;
   flex: 1;
@@ -222,20 +232,20 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
 }
 .hist2-card__status {
-  padding: 3px 8px;
+  padding: 4px 10px;
   border-radius: 99px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
 }
 .hist2-card__meta {
-  font-size: 12px;
+  font-size: 13px;
   color: #64748B;
 }
 .hist2-card__time {
-  font-size: 12px;
+  font-size: 13px;
   color: #94A3B8;
   margin-left: auto;
 }
@@ -243,20 +253,21 @@
   background: #E8F0FE;
   color: #0D47A1;
   border: none;
-  border-radius: 6px;
-  padding: 4px 10px;
-  font-size: 12px;
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 13px;
   font-weight: 700;
   cursor: pointer;
   font-family: inherit;
   transition: background 0.15s;
+  min-height: 32px;
 }
 .hist2-card__rebook:hover { background: #C5D8FB; }
 
 .hist2-card__payment {
-  margin-top: 8px;
-  font-size: 12px;
+  margin-top: 10px;
+  font-size: 13px;
   color: #94A3B8;
   border-top: 1px solid #F1F5F9;
-  padding-top: 8px;
+  padding-top: 10px;
 }
