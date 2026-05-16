@@ -102,8 +102,8 @@ body {
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-y: contain;
-  padding-top: var(--header-h);
-  padding-bottom: calc(var(--nav-h) + 8px);
+  /* NO padding-top — header is flex-shrink:0 in flow */
+  /* NO padding-bottom — BottomNav is flex-shrink:0 in flow */
 }
 .page::-webkit-scrollbar { display: none; }
 .page { scrollbar-width: none; }
