@@ -12,13 +12,19 @@ export function AuthProvider({ children }) {
     setUser(u); setToken(tok);
   };
 
+  const updateUser = (u) => {
+    if (!u) return;
+    setSession(u, token);
+    setUser(u);
+  };
+
   const logout = () => {
     clearSession();
     setUser(null); setToken(null);
   };
 
   return (
-    <AuthCtx.Provider value={{ user, token, login, logout, isLoggedIn: !!token }}>
+    <AuthCtx.Provider value={{ user, token, login, logout, updateUser, isLoggedIn: !!token }}>
       {children}
     </AuthCtx.Provider>
   );

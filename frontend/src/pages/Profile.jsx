@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Header from '../components/Header';
 import BottomNav from '../components/BottomNav';
@@ -8,15 +8,15 @@ import { getToken, getFavourites } from '../services/storage';
 import './Profile.css';
 
 const MENU = [
-  { label: 'Trip History',    sub: 'View all your past rides',  path: '/history',    icon: '📋' },
-  { label: 'Saved Places',    sub: 'Your favourite locations',  path: '/favourites', icon: '❤️' },
-  { label: 'Settings',        sub: 'Preferences & account',     path: '/settings',   icon: '⚙️' },
-  { label: 'Privacy & Terms', sub: 'Data usage & legal info',   path: '/privacy',    icon: '🔒' },
-  { label: 'Help & Support',  sub: 'FAQs & contact us',         path: '/support',    icon: '💬' },
+  { label: 'Trip History',    sub: 'View all your past rides',    path: '/history',    icon: '🧾', bg: '#EEF4FF' },
+  { label: 'Saved Places',    sub: 'Your favourite locations',    path: '/favourites', icon: '❤️', bg: '#FFF0F3' },
+  { label: 'Settings',        sub: 'Preferences & notifications', path: '/settings',   icon: '⚙️', bg: '#F0FDF4' },
+  { label: 'Privacy & Terms', sub: 'Data usage & legal info',     path: '/privacy',    icon: '🔒', bg: '#FFFBEB' },
+  { label: 'Help & Support',  sub: 'FAQs & contact us',           path: '/support',    icon: '💬', bg: '#F5F3FF' },
 ];
 
 export default function Profile() {
-  const navigate          = useNavigate();
+  const navigate = useNavigate();
   const { user, logout, updateUser } = useAuth();
 
   const [editing,   setEditing]   = useState(false);
@@ -27,19 +27,36 @@ export default function Profile() {
   const [saveOk,    setSaveOk]    = useState(false);
   const [tripCount, setTripCount] = useState(0);
   const [adminTap,  setAdminTap]  = useState(0);
+  const nameRef = useRef(null);
 
   const favCount = getFavourites().length;
 
-  // ✅ Fetch real trip count from backend
   useEffect(() => {
     const token = getToken();
     if (!token) return;
     api.getBookings(token)
-      .then(data => setTripCount((data.bookings || []).length))
+      .then(d => setTripCount((d.bookings || []).length))
       .catch(() => {});
   }, []);
 
-  // ✅ Actually save to backend
+  useEffect(() => {
+    if (editing) setTimeout(() => nameRef.current?.focus(), 100);
+  }, [editing]);
+
+  const startEdit = () => {
+    setName(user?.name || '');
+    setEmail(user?.email || '');
+    setSaveErr('');
+    setSaveOk(false);
+    setEditing(true);
+  };
+
+  const cancelEdit = () => {
+    setEditing(false);
+    setSaveErr('');
+    setSaveOk(false);
+  };
+
   const handleSave = async () => {
     setSaveErr(''); setSaveOk(false);
     if (!name.trim()) { setSaveErr('Name cannot be empty.'); return; }
@@ -47,147 +64,166 @@ export default function Profile() {
     try {
       const token = getToken();
       const data  = await api.updateProfile({ name: name.trim(), email: email.trim() }, token);
-      if (updateUser) updateUser(data.user); // update auth context
+      if (updateUser) updateUser(data.user);
       setSaveOk(true);
-      setTimeout(() => { setSaveOk(false); setEditing(false); }, 1200);
+      setTimeout(() => { setSaveOk(false); setEditing(false); }, 1000);
     } catch (err) {
-      setSaveErr(err.message || 'Failed to save. Please try again.');
-    } finally {
-      setSaving(false);
-    }
+      setSaveErr(err.message || 'Failed to save. Try again.');
+    } finally { setSaving(false); }
   };
 
-  const handleLogout = () => {
-    logout();
-    navigate('/');
-  };
-
-  const handleVersionTap = () => {
-    setAdminTap(prev => Math.min(prev + 1, 5));
-  };
+  const handleLogout = () => { logout(); navigate('/login'); };
 
   const initials = (user?.name || 'U')
-    .split(' ')
-    .map(w => w[0])
-    .slice(0, 2)
-    .join('')
-    .toUpperCase();
+    .split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase();
+
+  const STATS = [
+    { val: tripCount, label: 'Trips',  icon: '🛺' },
+    { val: favCount,  label: 'Saved',  icon: '❤️' },
+    { val: user?.rating || '—', label: 'Rating', icon: '⭐' },
+  ];
 
   return (
     <div className="app">
       <Header title="Profile" />
-      <div className="page prf2-page">
+      <div className="page prf-page">
 
-        {/* ── Hero ─────────────────────────── */}
-        <div className="prf2-hero">
-          <div className="prf2-avatar">
-            <div className="prf2-avatar__initials">{initials}</div>
-            <div className="prf2-avatar__ring"/>
-          </div>
+        {/* ── HERO ─────────────────────────── */}
+        <div className="prf-hero">
+          {/* background decoration */}
+          <div className="prf-hero__orb prf-hero__orb--a"/>
+          <div className="prf-hero__orb prf-hero__orb--b"/>
+          <div className="prf-hero__orb prf-hero__orb--c"/>
 
           {!editing ? (
             <>
-              <div className="prf2-name">{user?.name || 'User'}</div>
-              <div className="prf2-phone">📱 {user?.phone || '—'}</div>
-              {user?.email && (
-                <div className="prf2-email">✉️ {user.email}</div>
-              )}
-              <button className="prf2-edit-btn" onClick={() => { setEditing(true); setSaveErr(''); setSaveOk(false); }}>
-                ✏️ Edit Profile
+              {/* Avatar */}
+              <div className="prf-avatar">
+                <div className="prf-avatar__glow"/>
+                <div className="prf-avatar__circle">
+                  <span className="prf-avatar__initials">{initials}</span>
+                </div>
+                <div className="prf-avatar__ring"/>
+              </div>
+
+              <h2 className="prf-name">{user?.name || 'User'}</h2>
+
+              <div className="prf-contact">
+                <span className="prf-contact__item">
+                  <PhoneIcon/> {user?.phone || '—'}
+                </span>
+                {user?.email && (
+                  <span className="prf-contact__item">
+                    <MailIcon/> {user.email}
+                  </span>
+                )}
+              </div>
+
+              <button className="prf-edit-btn" onClick={startEdit}>
+                <PencilIcon/> Edit Profile
               </button>
+
+              {/* Stats */}
+              <div className="prf-stats">
+                {STATS.map((s, i) => (
+                  <div key={i} className="prf-stat">
+                    {i > 0 && <div className="prf-stat__sep"/>}
+                    <div className="prf-stat__inner">
+                      <span className="prf-stat__icon">{s.icon}</span>
+                      <span className="prf-stat__val">{s.val}</span>
+                      <span className="prf-stat__key">{s.label}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </>
           ) : (
-            <div className="prf2-edit-form">
-              <div className="prf2-edit-field">
-                <label>Full Name</label>
-                <input className="prf2-input" value={name}
+            /* ── Edit form ── */
+            <div className="prf-form">
+              <div className="prf-form__title">
+                <button className="prf-form__back" onClick={cancelEdit}>
+                  <BackIcon/>
+                </button>
+                Edit Profile
+              </div>
+
+              <div className="prf-field">
+                <label className="prf-field__label">Full Name</label>
+                <input
+                  ref={nameRef}
+                  className="prf-input"
+                  value={name}
                   onChange={e => { setName(e.target.value); setSaveErr(''); }}
-                  placeholder="Your full name" autoFocus/>
+                  placeholder="Your full name"
+                />
               </div>
-              <div className="prf2-edit-field">
-                <label>Email <span style={{color:'#94A3B8',fontWeight:400}}>(optional)</span></label>
-                <input className="prf2-input" type="email" value={email}
+
+              <div className="prf-field">
+                <label className="prf-field__label">
+                  Email <span className="prf-field__opt">(optional)</span>
+                </label>
+                <input
+                  className="prf-input"
+                  type="email"
+                  value={email}
                   onChange={e => { setEmail(e.target.value); setSaveErr(''); }}
-                  placeholder="your@email.com"/>
+                  placeholder="your@email.com"
+                />
               </div>
-              {saveErr && (
-                <div className="prf2-save-err">⚠️ {saveErr}</div>
-              )}
-              {saveOk && (
-                <div className="prf2-save-ok">✓ Profile updated!</div>
-              )}
-              <div className="prf2-edit-actions">
-                <button className="prf2-btn prf2-btn--ghost"
-                  onClick={() => { setEditing(false); setName(user?.name||''); setEmail(user?.email||''); setSaveErr(''); }}>
+
+              {saveErr && <div className="prf-alert prf-alert--err">⚠️ {saveErr}</div>}
+              {saveOk  && <div className="prf-alert prf-alert--ok">✓ Saved!</div>}
+
+              <div className="prf-form__actions">
+                <button className="prf-form__cancel" onClick={cancelEdit}>
                   Cancel
                 </button>
-                <button className="prf2-btn prf2-btn--primary" onClick={handleSave} disabled={saving}>
-                  {saving ? <><span className="prf2-spinner"/>Saving...</> : 'Save Changes'}
+                <button className="prf-form__save" onClick={handleSave} disabled={saving}>
+                  {saving ? <><SpinnerIcon/> Saving…</> : 'Save Changes'}
                 </button>
               </div>
             </div>
           )}
-
-          {/* Stats */}
-          <div className="prf2-stats">
-            <div className="prf2-stat">
-              <span className="prf2-stat__val">{tripCount}</span>
-              <span className="prf2-stat__key">Trips</span>
-            </div>
-            <div className="prf2-stat__div"/>
-            <div className="prf2-stat">
-              <span className="prf2-stat__val">{favCount}</span>
-              <span className="prf2-stat__key">Saved</span>
-            </div>
-            <div className="prf2-stat__div"/>
-            <div className="prf2-stat">
-              <span className="prf2-stat__val">{user?.rating || '—'}</span>
-              <span className="prf2-stat__key">Rating</span>
-            </div>
-          </div>
         </div>
 
-        {/* ── Menu ─────────────────────────── */}
-        <div className="prf2-section">
-          <div className="prf2-card">
+        {/* ── MENU ─────────────────────────── */}
+        <div className="prf-section">
+          <div className="prf-card">
             {MENU.map((item, i) => (
               <div key={i}>
-                <button className="prf2-menu-item" onClick={() => navigate(item.path)}>
-                  <div className="prf2-menu-item__icon">{item.icon}</div>
-                  <div className="prf2-menu-item__text">
-                    <div className="prf2-menu-item__label">{item.label}</div>
-                    <div className="prf2-menu-item__sub">{item.sub}</div>
+                <button className="prf-item" onClick={() => navigate(item.path)}>
+                  <div className="prf-item__icon" style={{ background: item.bg }}>
+                    {item.icon}
                   </div>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
-                    stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                    <path d="M9 18l6-6-6-6"/>
-                  </svg>
+                  <div className="prf-item__text">
+                    <span className="prf-item__label">{item.label}</span>
+                    <span className="prf-item__sub">{item.sub}</span>
+                  </div>
+                  <ChevronIcon/>
                 </button>
-                {i < MENU.length - 1 && <div className="prf2-divider"/>}
+                {i < MENU.length - 1 && <div className="prf-rule"/>}
               </div>
             ))}
           </div>
         </div>
 
-        {/* ── Sign out ─────────────────────── */}
-        <div className="prf2-section">
-          <button className="prf2-signout" onClick={handleLogout}>
-            <span>Sign Out</span>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
-              stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/>
-            </svg>
+        {/* ── SIGN OUT ─────────────────────── */}
+        <div className="prf-section">
+          <button className="prf-signout" onClick={handleLogout}>
+            <LogoutIcon/> Sign Out
           </button>
         </div>
 
-        {/* ── Footer / secret admin ────────── */}
-        <p className="prf2-version" onClick={handleVersionTap}>
+        {/* ── VERSION / SECRET ADMIN ───────── */}
+        <p
+          className="prf-version"
+          onClick={() => setAdminTap(p => Math.min(p + 1, 5))}>
           MoveOn Go · v1.0.0 · Made in Odisha 🇮🇳
         </p>
 
         {adminTap >= 5 && (
-          <div className="prf2-section" style={{paddingTop:0}}>
-            <button className="prf2-admin-btn" onClick={() => navigate('/admin')}>
+          <div className="prf-section prf-section--last">
+            <button className="prf-admin" onClick={() => navigate('/admin')}>
               🔐 Admin Panel
             </button>
           </div>
@@ -197,4 +233,27 @@ export default function Profile() {
       <BottomNav/>
     </div>
   );
+}
+
+/* ── SVG Icons ── */
+function PencilIcon() {
+  return <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>;
+}
+function PhoneIcon() {
+  return <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 10.8a19.79 19.79 0 01-3.07-8.67A2 2 0 012 0h3a2 2 0 012 1.72c.13.96.36 1.9.7 2.81a2 2 0 01-.45 2.11L6.09 7.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0122 16.92z"/></svg>;
+}
+function MailIcon() {
+  return <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>;
+}
+function ChevronIcon() {
+  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M9 18l6-6-6-6"/></svg>;
+}
+function BackIcon() {
+  return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>;
+}
+function LogoutIcon() {
+  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/></svg>;
+}
+function SpinnerIcon() {
+  return <span className="prf-spinner"/>;
 }
