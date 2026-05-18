@@ -17,7 +17,6 @@ router.post('/', protect, bookingLimiter, asyncHandler(async (req, res) => {
     return res.status(400).json({ message: 'Missing required booking fields.' });
   }
 
-  // ✅ fareAmount is optional — default to 50 if not provided
   const amount = fareAmount || 50;
 
   const booking = await Booking.create({
@@ -34,7 +33,7 @@ router.post('/', protect, bookingLimiter, asyncHandler(async (req, res) => {
 
   logger.info(`Booking created: ${booking._id}`, { userId: req.user._id, type, fareAmount: amount });
 
-  // ✅ Broadcast ride request to all connected drivers
+  // Broadcast ride request to all connected drivers
   if (global.io) {
     global.io.emit('ride:request', {
       id:         booking._id,
@@ -64,7 +63,6 @@ router.post('/:id/respond', protectDriver, asyncHandler(async (req, res) => {
   }
 
   if (action === 'accept') {
-    // Check booking is still searching (not already accepted by another driver)
     const booking = await Booking.findOneAndUpdate(
       { _id: bookingId, status: 'searching' },
       { status: 'accepted', driverId: req.driver._id },
@@ -77,29 +75,47 @@ router.post('/:id/respond', protectDriver, asyncHandler(async (req, res) => {
 
     logger.info(`Booking accepted: ${bookingId}`, { driverId: req.driver._id });
 
-    // ✅ Send driver details back to the rider via socket
+    const driverPayload = {
+      name:          req.driver.name,
+      phone:         req.driver.phone,
+      vehicleNumber: req.driver.vehicleNumber,
+      vehicleType:   req.driver.vehicleType,
+      rating:        req.driver.rating || 4.5,
+      eta:           '3–5 min',
+      driverId:      String(req.driver._id),
+    };
+
     if (global.io) {
-      global.io.emit(`booking:${bookingId}`, {
+      // ✅ FIX: Emit ONLY to the booking room, not to every connected socket.
+      // The rider joins this room via socket.emit('rider:joinBooking', { bookingId })
+      // immediately after their POST /api/bookings response returns.
+      global.io.to(`booking:${bookingId}`).emit(`booking:${bookingId}`, {
         action: 'accept',
-        driver: {
-          name:          req.driver.name,
-          phone:         req.driver.phone,
-          vehicleNumber: req.driver.vehicleNumber,
-          vehicleType:   req.driver.vehicleType,
-          rating:        req.driver.rating || 4.5,
-          eta:           '3–5 min',
-        },
+        driver: driverPayload,
+      });
+
+      // Also track this in the socket layer's activeBookings map
+      // so live location updates get routed to the right rider.
+      // We do this by emitting a private server-side event.
+      // (The socket index.js handles ride:respond for the fallback path,
+      //  but for the HTTP path we update activeBookings directly here.)
+      global.io.emit('_internal:bookingAccepted', {
+        bookingId: String(bookingId),
+        driverId:  String(req.driver._id),
       });
     }
 
-    res.json({ message: 'Booking accepted successfully.' });
+    res.json({
+      message: 'Booking accepted successfully.',
+      driver: driverPayload,
+    });
 
   } else {
-    // Driver declined — just notify (another driver might still accept)
     logger.info(`Booking declined: ${bookingId}`, { driverId: req.driver._id });
 
     if (global.io) {
-      global.io.emit(`booking:${bookingId}`, { action: 'decline' });
+      // ✅ FIX: Decline also goes to the room, not broadcast
+      global.io.to(`booking:${bookingId}`).emit(`booking:${bookingId}`, { action: 'decline' });
     }
 
     res.json({ message: 'Booking declined.' });
@@ -139,9 +155,9 @@ router.delete('/:id', protect, asyncHandler(async (req, res) => {
     return res.status(404).json({ message: 'Booking not found or cannot be cancelled.' });
   }
 
-  // Notify driver if they had accepted
   if (global.io) {
-    global.io.emit(`booking:${req.params.id}`, { action: 'cancelled' });
+    // ✅ FIX: Cancellation also room-targeted
+    global.io.to(`booking:${req.params.id}`).emit(`booking:${req.params.id}`, { action: 'cancelled' });
   }
 
   logger.info(`Booking cancelled: ${booking._id}`, { userId: req.user._id });

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Header from '../components/Header';
 import api from '../services/api';
-import { emitLocation, onRideRequest, emitRideResponse, connectSocket, disconnectSocket, getSocket } from '../services/socket';
+import { emitLocation, onRideRequest, connectSocket, disconnectSocket, getSocket } from '../services/socket';
 import { setDriverSession, getDriver, getDriverToken, clearDriverSession } from '../services/storage';
 import { watchPosition } from '../services/geocoding';
 import './Driver.css';
@@ -176,37 +176,36 @@ export default function Driver() {
   const [error,     setError]     = useState('');
   const [busy,      setBusy]      = useState(false);
   const [driver,    setDriver]    = useState(() => getDriver());
-  const [kickedMsg, setKickedMsg] = useState(''); // ✅ NEW — message shown when admin kicks driver
+  const [kickedMsg, setKickedMsg] = useState('');
   const pinInputRef = useRef(null);
 
   // Panel state
-  const [onDuty,    setOnDuty]    = useState(false);
-  const [gpsPos,    setGpsPos]    = useState(null);
-  const [speed,     setSpeed]     = useState(0);
-  const [tripCount, setTripCount] = useState(0);
-  const [earnings,  setEarnings]  = useState(0);
-  const [passengers,setPassengers]= useState(0);
-  const [tripActive,setTripActive]= useState(false);
-  const [rideReq,   setRideReq]   = useState(null);
-  const [issueSheet,setIssueSheet]= useState(false);
-  const unwatchRef  = useRef(null);
-  const pingRef     = useRef(null);
+  const [onDuty,     setOnDuty]    = useState(false);
+  const [gpsPos,     setGpsPos]    = useState(null);
+  const [speed,      setSpeed]     = useState(0);
+  const [tripCount,  setTripCount] = useState(0);
+  const [earnings,   setEarnings]  = useState(0);
+  const [passengers, setPassengers]= useState(0);
+  const [tripActive, setTripActive]= useState(false);
+  const [rideReq,    setRideReq]   = useState(null);
+  const [issueSheet, setIssueSheet]= useState(false);
+  const unwatchRef   = useRef(null);
+  const pingRef      = useRef(null);
+  const gpsPosRef    = useRef(null); // keep GPS pos accessible in interval closure
 
   const t = T[lang];
 
-  // ✅ FIXED — verify session with backend on mount, don't just trust localStorage
+  // ── Restore session on mount ────────────────────────────────
   useEffect(() => {
     const token = getDriverToken();
     const saved = getDriver();
-    if (!token || !saved) return; // not logged in, stay on login screen
+    if (!token || !saved) return;
 
-    // Verify the driver still exists and is approved in the backend
     (async () => {
       try {
-        // Connect socket first so we can receive kick event even before panel loads
         const socket = connectSocket();
+        socket.emit('driver:register', { driverId: saved.id || saved._id });
 
-        // Listen for admin kick event
         socket.on('driver:kicked', ({ reason }) => {
           unwatchRef.current?.();
           clearInterval(pingRef.current);
@@ -218,18 +217,14 @@ export default function Driver() {
           setKickedMsg(reason || 'Your account has been removed by admin.');
         });
 
-        // Call backend to verify driver is still valid
-        await api.getDriverProfile(token); // see note below — add this to api.js
+        await api.getDriverProfile(token);
         setStep('panel');
       } catch (err) {
-        // 401 = driver deleted or token invalid → force logout
         if (err.status === 401 || err.status === 404) {
           clearDriverSession();
           setDriver(null);
           setKickedMsg('Your account no longer exists. Contact admin.');
-        }
-        // Network error → still let them in (offline tolerance)
-        else {
+        } else {
           setStep('panel');
         }
       }
@@ -263,11 +258,9 @@ export default function Driver() {
       setDriverSession(d, token);
       setDriver(d);
 
-      // ✅ Connect socket and register driver room immediately after login
       const socket = connectSocket();
       socket.emit('driver:register', { driverId: d.id || d._id });
 
-      // Listen for kick event
       socket.on('driver:kicked', ({ reason }) => {
         unwatchRef.current?.();
         clearInterval(pingRef.current);
@@ -293,20 +286,20 @@ export default function Driver() {
     speak(t.gpsActive, lang);
     try { await api.setDriverDuty(true, getDriverToken()); } catch {}
 
-    // Build base payload including bus name and route for map popup display
     const basePayload = {
-      driverId:    driver?.id || driver?._id,
-      vehicleId:   driver?.vehicleId,
-      type:        driver?.vehicleType,
+      driverId:      driver?.id || driver?._id,
+      vehicleId:     driver?.vehicleId,
+      type:          driver?.vehicleType,
       vehicleNumber: driver?.vehicleNumber,
-      busName:     driver?.busName     || '',
-      routeFrom:   driver?.routeFrom   || '',
-      routeTo:     driver?.routeTo     || '',
-      routeNumber: driver?.routeNumber || '',
+      busName:       driver?.busName     || '',
+      routeFrom:     driver?.routeFrom   || '',
+      routeTo:       driver?.routeTo     || '',
+      routeNumber:   driver?.routeNumber || '',
     };
 
     unwatchRef.current = watchPosition(pos => {
       setGpsPos(pos);
+      gpsPosRef.current = pos;
       setSpeed(Math.round((pos.speed || 0) * 3.6));
       emitLocation({
         ...basePayload,
@@ -318,9 +311,10 @@ export default function Driver() {
     });
 
     pingRef.current = setInterval(() => {
-      if (gpsPos) emitLocation({
+      const pos = gpsPosRef.current;
+      if (pos) emitLocation({
         ...basePayload,
-        lat: gpsPos.lat, lng: gpsPos.lng,
+        lat: pos.lat, lng: pos.lng,
         status: 'active',
       });
     }, 10000);
@@ -331,6 +325,7 @@ export default function Driver() {
     if (!window.confirm(t.confirmEnd)) return;
     unwatchRef.current?.(); unwatchRef.current = null;
     clearInterval(pingRef.current); pingRef.current = null;
+    gpsPosRef.current = null;
     setOnDuty(false); setGpsPos(null); setSpeed(0);
     setTripActive(false); setRideReq(null);
     try { await api.setDriverDuty(false, getDriverToken()); } catch {}
@@ -342,27 +337,55 @@ export default function Driver() {
     if (!onDuty) return;
     const unsub = onRideRequest(req => {
       setRideReq(req);
-      speak(lang === 'hi' ? 'नई बुकिंग आई है।' : lang === 'or' ? 'ନୂଆ ବୁକିଂ ଆସିଛି।' : 'New ride request.', lang);
+      speak(
+        lang === 'hi' ? 'नई बुकिंग आई है।' :
+        lang === 'or' ? 'ନୂଆ ବୁକିଂ ଆସିଛି।' :
+        'New ride request.',
+        lang,
+      );
     });
     return unsub;
   }, [onDuty, lang]);
 
-  // ── Accept / decline ride ───────────────────────────────────
+  // ── Accept ride ─────────────────────────────────────────────
+  // ✅ FIXED: Only the HTTP call is made here.
+  // The backend route handles emitting the socket event WITH full driver
+  // details to the booking room. The old emitRideResponse() socket call
+  // was firing simultaneously and overwriting the driver info with { action }
+  // only — that was the race condition causing the 60s wait on the rider side.
   const acceptRide = async () => {
     if (!rideReq) return;
-    try { await api.respondToRide(rideReq.id, 'accept', getDriverToken()); } catch {}
-    emitRideResponse(rideReq.id, 'accept');
-    setTripActive(true);
-    setPassengers(p => p + 1);
-    setRideReq(null);
-    speak(lang === 'hi' ? 'बुकिंग स्वीकार।' : lang === 'or' ? 'ବୁକିଂ ଗ୍ରହଣ।' : 'Ride accepted.', lang);
+    try {
+      await api.respondToRide(rideReq.id, 'accept', getDriverToken());
+      // ✅ DO NOT call emitRideResponse here — backend handles socket emit
+      setTripActive(true);
+      setPassengers(p => p + 1);
+      setRideReq(null);
+      speak(
+        lang === 'hi' ? 'बुकिंग स्वीकार।' :
+        lang === 'or' ? 'ବୁକିଂ ଗ୍ରହଣ।' :
+        'Ride accepted.',
+        lang,
+      );
+    } catch (err) {
+      console.error('[Driver] Failed to accept ride:', err);
+      // Show error to driver so they know the accept didn't go through
+      alert('Failed to accept ride. Please try again.');
+    }
   };
 
+  // ── Decline ride ────────────────────────────────────────────
+  // ✅ FIXED: Same fix — HTTP only, no redundant socket emit
   const declineRide = async () => {
     if (!rideReq) return;
-    try { await api.respondToRide(rideReq.id, 'decline', getDriverToken()); } catch {}
-    emitRideResponse(rideReq.id, 'decline');
-    setRideReq(null);
+    try {
+      await api.respondToRide(rideReq.id, 'decline', getDriverToken());
+      // ✅ DO NOT call emitRideResponse here — backend handles socket emit
+      setRideReq(null);
+    } catch (err) {
+      console.error('[Driver] Failed to decline ride:', err);
+      setRideReq(null); // dismiss UI even on error
+    }
   };
 
   // ── End trip ────────────────────────────────────────────────
@@ -370,13 +393,24 @@ export default function Driver() {
     setTripActive(false);
     setTripCount(c => c + 1);
     setEarnings(e => e + (rideReq?.fareAmount || 120));
-    speak(lang === 'hi' ? 'यात्रा खत्म।' : lang === 'or' ? 'ଯାତ୍ରା ଶେଷ।' : 'Trip ended.', lang);
+    speak(
+      lang === 'hi' ? 'यात्रा खत्म।' :
+      lang === 'or' ? 'ଯାତ୍ରା ଶେଷ।' :
+      'Trip ended.',
+      lang,
+    );
   };
 
   // ── SOS ─────────────────────────────────────────────────────
   const handleSOS = () => {
     if (!window.confirm(t.confirmSos)) return;
-    if (gpsPos) emitLocation({ driverId: driver?.id || driver?._id, vehicleId: driver?.vehicleId, lat: gpsPos.lat, lng: gpsPos.lng, status: 'SOS' });
+    const pos = gpsPosRef.current;
+    if (pos) emitLocation({
+      driverId: driver?.id || driver?._id,
+      vehicleId: driver?.vehicleId,
+      lat: pos.lat, lng: pos.lng,
+      status: 'SOS',
+    });
     window.open('tel:+917328060281');
   };
 
@@ -408,13 +442,10 @@ export default function Driver() {
         </div>
 
         <div className="drv-auth-box card">
-          <div className="drv-auth-icon">
-            <SteeringIcon />
-          </div>
+          <div className="drv-auth-icon"><SteeringIcon /></div>
           <h2 className="drv-auth-title">{t.step1Title}</h2>
           <p className="drv-auth-sub">{t.step1Sub}</p>
 
-          {/* ✅ Show kicked/deleted message if applicable */}
           {kickedMsg && (
             <div style={{
               background: '#FEE2E2', color: '#B91C1C',
