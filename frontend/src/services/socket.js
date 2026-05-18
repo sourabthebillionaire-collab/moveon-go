@@ -5,7 +5,21 @@
 
 import { io } from 'socket.io-client';
 
-const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:3001';
+// Ensure SOCKET_URL is properly set, with explicit fallback for development
+const SOCKET_URL = (() => {
+  const envUrl = import.meta.env.VITE_SOCKET_URL;
+  if (envUrl) return envUrl;
+  
+  // Development fallback - always use port 3001 for backend
+  if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+    return 'http://localhost:3001';
+  }
+  
+  // Production fallback - use current origin
+  return window.location.origin;
+})();
+
+console.log('[Socket] Connecting to:', SOCKET_URL);
 
 let _socket = null;
 

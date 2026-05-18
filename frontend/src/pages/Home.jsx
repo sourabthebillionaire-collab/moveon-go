@@ -23,13 +23,14 @@ export default function Home() {
   const [locLabel,   setLocLabel]   = useState('');
   const [locCoords,  setLocCoords]  = useState(null);
   const [locLoad,    setLocLoad]    = useState(true);
+  const [locError,   setLocError]   = useState(false);
   const [dest,       setDest]       = useState('');
   const [destCoords, setDestCoords] = useState(null);
   const [tripCount,  setTripCount]  = useState(0);
 
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
-  const firstName = user?.name?.split(' ')[0] || 'there';
+  const firstName = user?.name?.split(' ')[0] || user?.phone?.slice(-4) || 'Guest';
 
   useEffect(() => {
     (async () => {
@@ -38,8 +39,11 @@ export default function Home() {
         setLocCoords(pos);
         const label = await reverseGeocode(pos.lat, pos.lng);
         setLocLabel(label);
-      } catch {
+        setLocError(false);
+      } catch (err) {
         setLocLabel('Location unavailable');
+        setLocError(true);
+        console.warn('[Home] Location error:', err.message);
       } finally {
         setLocLoad(false);
       }
@@ -62,11 +66,16 @@ export default function Home() {
 
   const refreshLocation = async () => {
     setLocLoad(true);
+    setLocError(false);
     try {
       const pos   = await getCurrentPosition();
       setLocCoords(pos);
       const label = await reverseGeocode(pos.lat, pos.lng);
       setLocLabel(label);
+      setLocError(false);
+    } catch (err) {
+      setLocLabel('Location unavailable');
+      setLocError(true);
     } finally { setLocLoad(false); }
   };
 

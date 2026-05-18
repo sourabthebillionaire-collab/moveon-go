@@ -74,8 +74,12 @@ export default function Profile() {
 
   const handleLogout = () => { logout(); navigate('/login'); };
 
-  const initials = (user?.name || 'U')
-    .split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase();
+  const initials = (user?.name?.split(' ') || [user?.phone?.slice(-2) || 'U'])
+    .filter(w => w)
+    .map(w => w[0])
+    .slice(0, 2)
+    .join('')
+    .toUpperCase();
 
   const STATS = [
     { val: tripCount, label: 'Trips',  icon: '🛺' },
