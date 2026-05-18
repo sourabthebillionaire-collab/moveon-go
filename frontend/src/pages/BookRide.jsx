@@ -123,6 +123,12 @@ export default function BookRide() {
       addBooking(b);
       setBookingId(b.id);
       const socket = connectSocket();
+
+      // ✅ JOIN the booking room so backend can target this socket.
+      // Without this, io.to('booking:'+id).emit() in bookings.js
+      // sends to an empty room and the rider never receives the event.
+      socket.emit('rider:joinBooking', { bookingId: b.id });
+
       socket.on(`booking:${b.id}`, (data) => {
         clearTimeout(timeoutRef.current);
         clearInterval(countdownRef.current);
@@ -130,6 +136,10 @@ export default function BookRide() {
         if (data.action === 'accept' && data.driver) {
           setDriver(data.driver);
           setBooking('found');
+        } else if (data.action === 'decline') {
+          // Driver declined — keep searching, don't cancel yet
+        } else if (data.action === 'cancelled') {
+          setBooking(null);
         }
       });
       countdownRef.current = setInterval(() => {
