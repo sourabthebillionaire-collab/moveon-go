@@ -8,7 +8,7 @@ import { getCurrentPosition, reverseGeocode, watchPosition } from '../services/g
 import { getRoute, calcFare, fmtDist, fmtDuration } from '../services/routing';
 import api from '../services/api';
 import { connectSocket, getSocket, emitRiderLocation } from '../services/socket';
-import { addBooking, getToken } from '../services/storage';
+import { addBooking, getToken, getActiveBooking, setActiveBooking, clearActiveBooking } from '../services/storage';
 import './BookRide.css';
 
 const RAZORPAY_KEY_ID = import.meta.env.VITE_RAZORPAY_KEY_ID || 'rzp_test_SqiUHd7YtEIDor';
@@ -67,6 +67,78 @@ export default function BookRide() {
       } catch { setPickup('Current Location'); }
     })();
     loadRazorpay(); // preload
+  }, []);
+
+  // ── Restore active booking on mount ─────────────────────────
+  useEffect(() => {
+    (async () => {
+      try {
+        const activeBookingId = getActiveBooking();
+        if (!activeBookingId) return;
+
+        const result = await api.getActiveBooking(getToken());
+        const activeBooking = result?.booking;
+        if (!activeBooking) {
+          clearActiveBooking();
+          return;
+        }
+
+        // ✅ Restore booking state
+        setBookingId(activeBooking._id);
+        setBooking(activeBooking.status === 'accepted' ? 'found' : 'searching');
+        setType(activeBooking.type);
+        setPickup(activeBooking.pickup);
+        setPickupCoords(activeBooking.pickupCoords);
+        setDropoff(activeBooking.dropoff);
+        setDropoffCoords(activeBooking.dropoffCoords);
+        setPayment(activeBooking.payment);
+        setFare({
+          min: activeBooking.fareAmount,
+          max: activeBooking.fareAmount,
+          amount: activeBooking.fareAmount,
+          display: activeBooking.fare
+        });
+
+        // If driver accepted, show driver details
+        if (activeBooking.driverId) {
+          setDriver({
+            driverId: activeBooking.driverId._id,
+            name: activeBooking.driverId.name,
+            phone: activeBooking.driverId.phone,
+            vehicleNumber: activeBooking.driverId.vehicleNumber,
+            rating: activeBooking.driverId.rating,
+            eta: activeBooking.eta || '3–5 min'
+          });
+          driverIdRef.current = activeBooking.driverId._id;
+        }
+
+        // Re-establish socket listeners
+        const socket = connectSocket();
+        if (socket.connected) {
+          socket.emit('rider:joinBooking', { bookingId: activeBooking._id });
+        } else {
+          socket.once('connect', () => {
+            socket.emit('rider:joinBooking', { bookingId: activeBooking._id });
+          });
+        }
+
+        // Re-start GPS tracking if booking is active
+        if (activeBooking.status !== 'completed' && activeBooking.status !== 'cancelled') {
+          riderLocationWatchRef.current = watchPosition(pos => {
+            emitRiderLocation({
+              bookingId: activeBooking._id,
+              lat: pos.lat,
+              lng: pos.lng,
+              bearing: pos.bearing,
+              speed: pos.speed
+            });
+          });
+        }
+      } catch (err) {
+        console.error('Failed to restore booking:', err);
+        clearActiveBooking();
+      }
+    })();
   }, []);
 
   useEffect(() => {
@@ -136,6 +208,7 @@ export default function BookRide() {
       if (!b?.id) throw new Error('No booking ID returned');
       addBooking(b);
       setBookingId(b.id);
+      setActiveBooking(b.id); // ✅ Store active booking so it persists across page reloads
       const socket = connectSocket();
 
       // ✅ JOIN the booking room so backend can target this socket.
@@ -173,6 +246,7 @@ export default function BookRide() {
         } else if (data.action === 'decline') {
           // Driver declined — keep searching, don't cancel yet
         } else if (data.action === 'cancelled') {
+          clearActiveBooking(); // ✅ Clear active booking when remotely cancelled
           setBooking(null);
         }
       });
@@ -187,6 +261,7 @@ export default function BookRide() {
           driverLocationRef.current = null;
         }
         try { await api.cancelBooking(b.id, getToken()); } catch {}
+        clearActiveBooking(); // ✅ Clear active booking when timeout
         setBooking('timeout');
       }, TIMEOUT_SECONDS * 1000);
     } catch (err) {
@@ -259,6 +334,7 @@ export default function BookRide() {
       }
     }
     if (bookingId) { try { await api.cancelBooking(bookingId, getToken()); } catch {} }
+    clearActiveBooking(); // ✅ Clear active booking when cancelled
     setBooking(null); setBookingId(null); setDriver(null); setDriverLocation(null); setPayLoading(false);
   };
 

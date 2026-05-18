@@ -10,6 +10,7 @@ const K = {
   DTOKEN:     'mg_driver_token',
   TRIPS:      'mg_trips',
   FAVOURITES: 'mg_favourites',
+  ACTIVE_BOOKING: 'mg_active_booking',
 };
 
 function read(key)        { try { return JSON.parse(localStorage.getItem(key)); } catch { return null; } }
@@ -60,4 +61,18 @@ export function addFavourite(place) {
 
 export function removeFavourite(id) {
   write(K.FAVOURITES, getFavourites().filter(f => f.id !== id));
+}
+
+// ── Active Booking ────────────────────────────────────────────
+// Track the current active booking so we can restore state on page reload
+export function getActiveBooking() {
+  return read(K.ACTIVE_BOOKING);
+}
+
+export function setActiveBooking(bookingId) {
+  write(K.ACTIVE_BOOKING, bookingId);
+}
+
+export function clearActiveBooking() {
+  remove(K.ACTIVE_BOOKING);
 }
