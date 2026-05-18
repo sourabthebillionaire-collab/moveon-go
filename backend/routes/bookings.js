@@ -86,23 +86,15 @@ router.post('/:id/respond', protectDriver, asyncHandler(async (req, res) => {
     };
 
     if (global.io) {
-      // ✅ FIX: Emit ONLY to the booking room, not to every connected socket.
-      // The rider joins this room via socket.emit('rider:joinBooking', { bookingId })
-      // immediately after their POST /api/bookings response returns.
-      global.io.to(`booking:${bookingId}`).emit(`booking:${bookingId}`, {
-        action: 'accept',
-        driver: driverPayload,
-      });
+      const eventPayload = { action: 'accept', driver: driverPayload };
 
-      // Also track this in the socket layer's activeBookings map
-      // so live location updates get routed to the right rider.
-      // We do this by emitting a private server-side event.
-      // (The socket index.js handles ride:respond for the fallback path,
-      //  but for the HTTP path we update activeBookings directly here.)
-      global.io.emit('_internal:bookingAccepted', {
-        bookingId: String(bookingId),
-        driverId:  String(req.driver._id),
-      });
+      // Emit to booking room (riders who joined via rider:joinBooking)
+      global.io.to(`booking:${bookingId}`).emit(`booking:${bookingId}`, eventPayload);
+
+      // ✅ ALSO broadcast to ALL as fallback — rider's socket.on('booking:'+id)
+      // filters by event name so other sockets silently ignore it.
+      // Guarantees delivery even if rider:joinBooking emit was lost or delayed.
+      global.io.emit(`booking:${bookingId}`, eventPayload);
     }
 
     res.json({
