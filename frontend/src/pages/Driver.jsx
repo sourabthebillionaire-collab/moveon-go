@@ -668,6 +668,9 @@ export default function Driver() {
                 <div>
                   <div className="drv-ride-row__label">{t.from}</div>
                   <div className="drv-ride-row__val">{rideReq.pickup}</div>
+                  {rideReq.pickupLat && rideReq.pickupLng && (
+                    <div className="drv-ride-row__coord">{rideReq.pickupLat.toFixed(4)}, {rideReq.pickupLng.toFixed(4)}</div>
+                  )}
                 </div>
               </div>
               <div className="drv-ride-connector"/>
@@ -676,6 +679,9 @@ export default function Driver() {
                 <div>
                   <div className="drv-ride-row__label">{t.to}</div>
                   <div className="drv-ride-row__val">{rideReq.dropoff}</div>
+                  {rideReq.dropoffLat && rideReq.dropoffLng && (
+                    <div className="drv-ride-row__coord">{rideReq.dropoffLat.toFixed(4)}, {rideReq.dropoffLng.toFixed(4)}</div>
+                  )}
                 </div>
               </div>
               <div className="drv-ride-meta">

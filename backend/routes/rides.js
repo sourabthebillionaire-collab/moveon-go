@@ -10,24 +10,37 @@ router.post('/:rideId/respond', protectDriver, async (req, res) => {
       return res.status(400).json({ message: 'action must be accept or decline.' });
     }
 
+    const rideId = req.params.rideId;
+
     if (action === 'accept') {
-      await Booking.findByIdAndUpdate(req.params.rideId, {
-        status: 'accepted', driverId: req.driver._id, acceptedAt: new Date(),
-      });
+      const booking = await Booking.findOneAndUpdate(
+        { _id: rideId, status: 'searching' },
+        { status: 'accepted', driverId: req.driver._id, acceptedAt: new Date() },
+        { new: true }
+      );
+
+      if (!booking) {
+        return res.status(404).json({ message: 'Ride not available. Already taken or cancelled.' });
+      }
+
+      const driverPayload = {
+        name:          req.driver.name,
+        phone:         req.driver.phone,
+        vehicleNumber: req.driver.vehicleNumber,
+        vehicleType:   req.driver.vehicleType,
+        rating:        req.driver.rating || 4.5,
+        eta:           '3–5 min',
+        driverId:      String(req.driver._id),
+      };
 
       if (global.io) {
-        global.io.emit('booking:update', {
-          bookingId: req.params.rideId,
-          status:    'accepted',
-          driver: {
-            id:            req.driver._id,
-            name:          req.driver.name,
-            phone:         req.driver.phone,
-            vehicleNumber: req.driver.vehicleNumber,
-            rating:        req.driver.rating,
-            eta:           '5 min',
-          },
-        });
+        const eventPayload = { action: 'accept', driver: driverPayload };
+        global.io.to(`booking:${rideId}`).emit(`booking:${rideId}`, eventPayload);
+        global.io.emit(`booking:${rideId}`, eventPayload);
+      }
+    } else {
+      if (global.io) {
+        global.io.to(`booking:${rideId}`).emit(`booking:${rideId}`, { action: 'decline' });
       }
     }
 

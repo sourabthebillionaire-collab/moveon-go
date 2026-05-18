@@ -90,7 +90,7 @@ export const api = {
 
   // Accept / decline a ride request
   respondToRide: (rideId, action, token) =>
-    post(`/rides/${rideId}/respond`, { action }, token),
+    post(`/bookings/${rideId}/respond`, { action }, token),
 
   // ── Vehicles / Buses ──────────────────────────────────────────
   // Get all active vehicles near a location

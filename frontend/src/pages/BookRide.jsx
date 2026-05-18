@@ -48,11 +48,14 @@ export default function BookRide() {
   const [booking,       setBooking]       = useState(null);
   const [bookingId,     setBookingId]     = useState(null);
   const [driver,        setDriver]        = useState(null);
+  const [driverLocation, setDriverLocation] = useState(null);
   const [countdown,     setCountdown]     = useState(TIMEOUT_SECONDS);
   const [payLoading,    setPayLoading]    = useState(false);
 
-  const timeoutRef   = useRef(null);
-  const countdownRef = useRef(null);
+  const driverIdRef        = useRef(null);
+  const driverLocationRef  = useRef(null);
+  const timeoutRef         = useRef(null);
+  const countdownRef       = useRef(null);
 
   useEffect(() => {
     (async () => {
@@ -97,7 +100,13 @@ export default function BookRide() {
       clearTimeout(timeoutRef.current);
       clearInterval(countdownRef.current);
       const socket = getSocket();
-      if (socket && bookingId) socket.off(`booking:${bookingId}`);
+      if (socket && bookingId) {
+        socket.off(`booking:${bookingId}`);
+        if (driverLocationRef.current) {
+          socket.off('driver:locationUpdate', driverLocationRef.current);
+          driverLocationRef.current = null;
+        }
+      }
     };
   }, [bookingId]);
 
@@ -125,16 +134,29 @@ export default function BookRide() {
       const socket = connectSocket();
 
       // ✅ JOIN the booking room so backend can target this socket.
-      // Without this, io.to('booking:'+id).emit() in bookings.js
-      // sends to an empty room and the rider never receives the event.
-      socket.emit('rider:joinBooking', { bookingId: b.id });
+      // If the socket is not yet connected, wait until it is.
+      if (socket.connected) {
+        socket.emit('rider:joinBooking', { bookingId: b.id });
+      } else {
+        socket.once('connect', () => socket.emit('rider:joinBooking', { bookingId: b.id }));
+      }
 
-      socket.on(`booking:${b.id}`, (data) => {
+      const bookingEvent = `booking:${b.id}`;
+      const driverLocationHandler = ({ driverId, lat, lng, bearing, speed }) => {
+        if (driverIdRef.current && String(driverIdRef.current) === String(driverId)) {
+          setDriverLocation({ lat, lng, bearing, speed });
+        }
+      };
+      driverLocationRef.current = driverLocationHandler;
+      socket.on('driver:locationUpdate', driverLocationHandler);
+
+      socket.on(bookingEvent, (data) => {
         clearTimeout(timeoutRef.current);
         clearInterval(countdownRef.current);
-        socket.off(`booking:${b.id}`);
+        socket.off(bookingEvent);
         if (data.action === 'accept' && data.driver) {
           setDriver(data.driver);
+          driverIdRef.current = data.driver.driverId;
           setBooking('found');
         } else if (data.action === 'decline') {
           // Driver declined — keep searching, don't cancel yet
@@ -147,7 +169,11 @@ export default function BookRide() {
       }, 1000);
       timeoutRef.current = setTimeout(async () => {
         clearInterval(countdownRef.current);
-        socket.off(`booking:${b.id}`);
+        socket.off(bookingEvent);
+        if (driverLocationRef.current) {
+          socket.off('driver:locationUpdate', driverLocationRef.current);
+          driverLocationRef.current = null;
+        }
         try { await api.cancelBooking(b.id, getToken()); } catch {}
         setBooking('timeout');
       }, TIMEOUT_SECONDS * 1000);
@@ -209,9 +235,15 @@ export default function BookRide() {
     clearTimeout(timeoutRef.current);
     clearInterval(countdownRef.current);
     const socket = getSocket();
-    if (socket && bookingId) socket.off(`booking:${bookingId}`);
+    if (socket && bookingId) {
+      socket.off(`booking:${bookingId}`);
+      if (driverLocationRef.current) {
+        socket.off('driver:locationUpdate', driverLocationRef.current);
+        driverLocationRef.current = null;
+      }
+    }
     if (bookingId) { try { await api.cancelBooking(bookingId, getToken()); } catch {} }
-    setBooking(null); setBookingId(null); setDriver(null); setPayLoading(false);
+    setBooking(null); setBookingId(null); setDriver(null); setDriverLocation(null); setPayLoading(false);
   };
 
   // ── Searching ────────────────────────────────────────────────
@@ -272,6 +304,11 @@ export default function BookRide() {
             <span>💰 {fare?.display}</span>
             <span>💳 {payment}</span>
           </div>
+          {driverLocation && (
+            <div className="br-driver-location">
+              🚗 Driver current position: {driverLocation.lat.toFixed(4)}, {driverLocation.lng.toFixed(4)}
+            </div>
+          )}
           {payment !== 'Cash' && (
             <div className="br-paid-badge">✅ Payment Confirmed via Razorpay</div>
           )}
