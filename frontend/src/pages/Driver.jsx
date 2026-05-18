@@ -188,6 +188,8 @@ export default function Driver() {
   const [passengers, setPassengers]= useState(0);
   const [tripActive, setTripActive]= useState(false);
   const [rideReq,    setRideReq]   = useState(null);
+  const [activeRide, setActiveRide]= useState(null);
+  const [userLocation, setUserLocation] = useState(null);
   const [issueSheet, setIssueSheet]= useState(false);
   const unwatchRef   = useRef(null);
   const pingRef      = useRef(null);
@@ -327,7 +329,7 @@ export default function Driver() {
     clearInterval(pingRef.current); pingRef.current = null;
     gpsPosRef.current = null;
     setOnDuty(false); setGpsPos(null); setSpeed(0);
-    setTripActive(false); setRideReq(null);
+    setTripActive(false); setRideReq(null); setActiveRide(null); setUserLocation(null);
     try { await api.setDriverDuty(false, getDriverToken()); } catch {}
     disconnectSocket();
   };
@@ -347,6 +349,19 @@ export default function Driver() {
     return unsub;
   }, [onDuty, lang]);
 
+  useEffect(() => {
+    const socket = getSocket();
+    if (!socket) return;
+
+    const handleRiderLocation = ({ bookingId, lat, lng, bearing, speed }) => {
+      if (!activeRide || String(bookingId) !== String(activeRide.id)) return;
+      setUserLocation({ lat, lng, bearing, speed });
+    };
+
+    socket.on('rider:locationUpdate', handleRiderLocation);
+    return () => socket.off('rider:locationUpdate', handleRiderLocation);
+  }, [activeRide]);
+
   // ── Accept ride ─────────────────────────────────────────────
   // ✅ FIXED: Only the HTTP call is made here.
   // The backend route handles emitting the socket event WITH full driver
@@ -358,6 +373,8 @@ export default function Driver() {
     try {
       await api.respondToRide(rideReq.id, 'accept', getDriverToken());
       // ✅ DO NOT call emitRideResponse here — backend handles socket emit
+      setActiveRide({ ...rideReq, id: rideReq.id });
+      setUserLocation(null);
       setTripActive(true);
       setPassengers(p => p + 1);
       setRideReq(null);
@@ -392,7 +409,9 @@ export default function Driver() {
   const endTrip = () => {
     setTripActive(false);
     setTripCount(c => c + 1);
-    setEarnings(e => e + (rideReq?.fareAmount || 120));
+    setEarnings(e => e + (activeRide?.fareAmount || 120));
+    setActiveRide(null);
+    setUserLocation(null);
     speak(
       lang === 'hi' ? 'यात्रा खत्म।' :
       lang === 'or' ? 'ଯାତ୍ରା ଶେଷ।' :
@@ -598,6 +617,17 @@ export default function Driver() {
             <span className="live-dot" style={{width:7,height:7}}/>
             <span>{t.gpsActive}</span>
             {gpsPos && <span className="drv-gps-coords">{gpsPos.lat.toFixed(4)}, {gpsPos.lng.toFixed(4)}</span>}
+          </div>
+        )}
+
+        {activeRide && (
+          <div className="drv-user-location-card card" style={{margin:'12px 16px',padding:'12px 14px'}}>
+            <div style={{fontSize:12,color:'var(--gray-500)',marginBottom:4}}>Passenger location</div>
+            {userLocation ? (
+              <div style={{fontSize:14,fontWeight:700}}>{userLocation.lat.toFixed(4)}, {userLocation.lng.toFixed(4)}</div>
+            ) : (
+              <div style={{fontSize:14,color:'var(--gray-500)'}}>Waiting for passenger location…</div>
+            )}
           </div>
         )}
 

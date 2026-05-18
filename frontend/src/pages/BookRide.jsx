@@ -4,10 +4,10 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import Header from '../components/Header';
 import BottomNav from '../components/BottomNav';
 import PlaceSearch from '../components/PlaceSearch';
-import { getCurrentPosition, reverseGeocode } from '../services/geocoding';
+import { getCurrentPosition, reverseGeocode, watchPosition } from '../services/geocoding';
 import { getRoute, calcFare, fmtDist, fmtDuration } from '../services/routing';
 import api from '../services/api';
-import { connectSocket, getSocket } from '../services/socket';
+import { connectSocket, getSocket, emitRiderLocation } from '../services/socket';
 import { addBooking, getToken } from '../services/storage';
 import './BookRide.css';
 
@@ -52,10 +52,11 @@ export default function BookRide() {
   const [countdown,     setCountdown]     = useState(TIMEOUT_SECONDS);
   const [payLoading,    setPayLoading]    = useState(false);
 
-  const driverIdRef        = useRef(null);
-  const driverLocationRef  = useRef(null);
-  const timeoutRef         = useRef(null);
-  const countdownRef       = useRef(null);
+  const driverIdRef            = useRef(null);
+  const driverLocationRef      = useRef(null);
+  const riderLocationWatchRef  = useRef(null);
+  const timeoutRef             = useRef(null);
+  const countdownRef           = useRef(null);
 
   useEffect(() => {
     (async () => {
@@ -99,6 +100,10 @@ export default function BookRide() {
     return () => {
       clearTimeout(timeoutRef.current);
       clearInterval(countdownRef.current);
+      if (riderLocationWatchRef.current) {
+        riderLocationWatchRef.current();
+        riderLocationWatchRef.current = null;
+      }
       const socket = getSocket();
       if (socket && bookingId) {
         socket.off(`booking:${bookingId}`);
@@ -140,6 +145,13 @@ export default function BookRide() {
       } else {
         socket.once('connect', () => socket.emit('rider:joinBooking', { bookingId: b.id }));
       }
+
+      if (riderLocationWatchRef.current) {
+        riderLocationWatchRef.current();
+      }
+      riderLocationWatchRef.current = watchPosition(pos => {
+        emitRiderLocation({ bookingId: b.id, lat: pos.lat, lng: pos.lng, bearing: pos.bearing, speed: pos.speed });
+      });
 
       const bookingEvent = `booking:${b.id}`;
       const driverLocationHandler = ({ driverId, lat, lng, bearing, speed }) => {
@@ -234,6 +246,10 @@ export default function BookRide() {
   const handleCancel = async () => {
     clearTimeout(timeoutRef.current);
     clearInterval(countdownRef.current);
+    if (riderLocationWatchRef.current) {
+      riderLocationWatchRef.current();
+      riderLocationWatchRef.current = null;
+    }
     const socket = getSocket();
     if (socket && bookingId) {
       socket.off(`booking:${bookingId}`);

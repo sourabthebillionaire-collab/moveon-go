@@ -78,6 +78,12 @@ export function joinBookingRoom(bookingId) {
   }
 }
 
+// ── Rider: send current location while waiting for pickup ─────
+export function emitRiderLocation(payload) {
+  const s = getSocket();
+  if (s.connected) s.emit('rider:location', { ...payload, ts: Date.now() });
+}
+
 // ── Rider: listen for booking status updates ──────────────────
 // ✅ FIXED — was listening to 'booking:update' (wrong event name).
 // Backend emits 'booking:{bookingId}' as a dynamic per-booking event.

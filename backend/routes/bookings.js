@@ -86,6 +86,10 @@ router.post('/:id/respond', protectDriver, asyncHandler(async (req, res) => {
     };
 
     if (global.io) {
+      if (global.io.activeBookings) {
+        global.io.activeBookings.set(String(bookingId), String(req.driver._id));
+      }
+
       const eventPayload = { action: 'accept', driver: driverPayload };
 
       // Emit to booking room (riders who joined via rider:joinBooking)
@@ -148,6 +152,9 @@ router.delete('/:id', protect, asyncHandler(async (req, res) => {
   }
 
   if (global.io) {
+    if (global.io.activeBookings) {
+      global.io.activeBookings.delete(String(req.params.id));
+    }
     // ✅ FIX: Cancellation also room-targeted
     global.io.to(`booking:${req.params.id}`).emit(`booking:${req.params.id}`, { action: 'cancelled' });
   }

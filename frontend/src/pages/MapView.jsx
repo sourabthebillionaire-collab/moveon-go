@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import Header from '../components/Header';
@@ -52,6 +52,7 @@ export default function MapView() {
   const [filter,      setFilter]      = useState('all');
   const [loading,     setLoading]     = useState(true);
   const routeState = useLocation().state || {};
+  const navigate = useNavigate();
 
   // Init map
   useEffect(() => {
@@ -298,7 +299,7 @@ export default function MapView() {
                 </button>
                 {selected.type !== 'bus' && (
                   <button className="btn btn--primary" style={{flex:1}}
-                    onClick={() => window.location.href=`/book?type=${selected.type}&vehicleId=${selected.id}`}>
+                    onClick={() => navigate(`/book?type=${selected.type}&vehicleId=${selected.id}`)}>
                     Book Now
                   </button>
                 )}

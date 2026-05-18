@@ -4,6 +4,7 @@ module.exports = function initSocket(io) {
   const connectedDrivers       = new Map(); // socketId → driverId
   const activeVehiclePositions = new Map(); // driverId → latest position
   const activeBookings         = new Map(); // bookingId → driverId (set on accept)
+  io.activeBookings = activeBookings;
 
   io.on('connection', (socket) => {
     console.log(`[Socket] Connected: ${socket.id}`);
@@ -91,6 +92,17 @@ module.exports = function initSocket(io) {
         console.warn(`[SOS] Driver ${driverId} at ${lat},${lng}`);
         io.emit('driver:sos', { driverId, lat, lng, ts: Date.now() });
       }
+    });
+
+    // ── Rider: live location updates for accepted booking ─────────
+    socket.on('rider:location', (data) => {
+      const { bookingId, lat, lng, bearing, speed } = data || {};
+      if (!bookingId || lat == null || lng == null) return;
+      const driverId = activeBookings.get(String(bookingId));
+      if (!driverId) return;
+      io.to(`driver:${driverId}`).emit('rider:locationUpdate', {
+        bookingId, lat, lng, bearing, speed,
+      });
     });
 
     // ✅ FIX 3 — ride:respond is now a FALLBACK ONLY path
