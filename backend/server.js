@@ -25,14 +25,30 @@ const server = http.createServer(app);
 
 // ── Socket.io ─────────────────────────────────────────────────
 const allowedOrigins = [
+  // Production
   process.env.FRONTEND_URL || 'http://localhost:5173',
+  // Development
   'http://localhost:5173',
   'http://localhost:3000',
+  // Allow any Vercel deployment (*.vercel.app)
+  /\.vercel\.app$/i,
 ];
 
 const io = new Server(server, {
   cors: { 
-    origin: allowedOrigins,
+    origin: (origin, callback) => {
+      // Allow requests with no origin (like mobile apps or curl requests)
+      if (!origin) return callback(null, true);
+      
+      const isAllowed = allowedOrigins.some(allowed => {
+        if (allowed instanceof RegExp) {
+          return allowed.test(origin);
+        }
+        return origin === allowed;
+      });
+      
+      callback(null, isAllowed);
+    },
     methods: ['GET', 'POST'],
     credentials: true,
   },
@@ -45,7 +61,22 @@ logger.info('Socket.io initialized with CORS whitelist:', { origins: allowedOrig
 // ── Middleware ────────────────────────────────────────────────
 app.use(helmet({ crossOriginEmbedderPolicy: false }));
 app.use(cors({ 
-  origin: allowedOrigins,
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    const isAllowed = allowedOrigins.some(allowed => {
+      if (allowed instanceof RegExp) {
+        return allowed.test(origin);
+      }
+      return origin === allowed;
+    });
+    
+    if (!isAllowed) {
+      return callback(new Error('CORS not allowed'));
+    }
+    callback(null, true);
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
@@ -82,14 +113,28 @@ app.get('/health', (req, res) => {
 });
 
 // ── Serve Frontend (Production) ───────────────────────────────
-// const path = require('path');
-// if (process.env.NODE_ENV === 'production') {
-//   const frontendBuildPath = path.join(__dirname, '../frontend/dist');
-//   app.use(express.static(frontendBuildPath));
-//   app.get('*', (req, res) => {
-//     res.sendFile(path.join(frontendBuildPath, 'index.html'));
-//   });
-// }
+const path = require('path');
+const frontendBuildPath = path.join(__dirname, '../frontend/dist');
+
+// Serve static assets (JS, CSS, images, etc.)
+app.use(express.static(frontendBuildPath));
+
+// For any non-API request that doesn't match a real file, serve index.html
+// This enables React Router to handle client-side routing
+app.get('*', (req, res, next) => {
+  // Skip if this is an API request (it will hit the 404 handler below)
+  if (req.path.startsWith('/api/') || req.path === '/health') {
+    return next();
+  }
+  
+  const indexPath = path.join(frontendBuildPath, 'index.html');
+  res.sendFile(indexPath, (err) => {
+    if (err) {
+      logger.warn(`Failed to serve frontend: ${err.message}`);
+      next();
+    }
+  });
+});
 
 // ── 404 ───────────────────────────────────────────────────────
 app.use((req, res) => {
