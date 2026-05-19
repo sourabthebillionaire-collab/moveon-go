@@ -167,6 +167,69 @@ const storedBooking = getActiveBooking();
           });
         }
 
+        // Attach booking and driver-location listeners so we receive later events
+        const bookingEvent = `booking:${activeBooking._id}`;
+        const driverLocationHandler = ({ driverId, lat, lng, bearing, speed }) => {
+          if (driverIdRef.current && String(driverIdRef.current) === String(driverId)) {
+            setDriverLocation({ lat, lng, bearing, speed });
+          }
+        };
+        driverLocationRef.current = driverLocationHandler;
+        socket.on('driver:locationUpdate', driverLocationHandler);
+
+        socket.on(bookingEvent, (data) => {
+          // mirror the same logic as when booking was created
+          if (data.action === 'accept' && data.driver) {
+            setDriver(data.driver);
+            driverIdRef.current = data.driver.driverId;
+            setBooking('found');
+            const currentBooking = getActiveBooking();
+            setActiveBooking({
+              ...(typeof currentBooking === 'object' && currentBooking ? currentBooking : {}),
+              status: 'accepted',
+              driver: data.driver,
+            });
+          } else if (data.action === 'started') {
+            setBooking('found');
+            const currentBooking = getActiveBooking();
+            setActiveBooking({
+              ...(typeof currentBooking === 'object' && currentBooking ? currentBooking : {}),
+              status: 'started',
+            });
+          } else if (data.action === 'completed') {
+            // trip finished — tidy up listeners and local state
+            socket.off(bookingEvent);
+            if (driverLocationRef.current) {
+              socket.off('driver:locationUpdate', driverLocationRef.current);
+              driverLocationRef.current = null;
+            }
+            if (riderLocationWatchRef.current) {
+              riderLocationWatchRef.current();
+              riderLocationWatchRef.current = null;
+            }
+            clearActiveBooking();
+            setBooking('completed');
+            setBookingId(null);
+            setDriver(null);
+            setDriverLocation(null);
+          } else if (data.action === 'cancelled') {
+            socket.off(bookingEvent);
+            if (driverLocationRef.current) {
+              socket.off('driver:locationUpdate', driverLocationRef.current);
+              driverLocationRef.current = null;
+            }
+            if (riderLocationWatchRef.current) {
+              riderLocationWatchRef.current();
+              riderLocationWatchRef.current = null;
+            }
+            clearActiveBooking();
+            setBooking('cancelled');
+            setBookingId(null);
+            setDriver(null);
+            setDriverLocation(null);
+          }
+        });
+
         // Re-start GPS tracking if booking is active
         if (activeBooking.status !== 'completed' && activeBooking.status !== 'cancelled') {
           riderLocationWatchRef.current = watchPosition(pos => {
@@ -285,10 +348,10 @@ const storedBooking = getActiveBooking();
       driverLocationRef.current = driverLocationHandler;
       socket.on('driver:locationUpdate', driverLocationHandler);
 
+      // Keep the booking listener active until the trip completes or is cancelled
       socket.on(bookingEvent, (data) => {
         clearTimeout(timeoutRef.current);
         clearInterval(countdownRef.current);
-        socket.off(bookingEvent);
         if (data.action === 'accept' && data.driver) {
           setDriver(data.driver);
           driverIdRef.current = data.driver.driverId;
@@ -307,6 +370,16 @@ const storedBooking = getActiveBooking();
             status: 'started',
           });
         } else if (data.action === 'completed') {
+          // trip finished — tidy up listeners and local state
+          socket.off(bookingEvent);
+          if (driverLocationRef.current) {
+            socket.off('driver:locationUpdate', driverLocationRef.current);
+            driverLocationRef.current = null;
+          }
+          if (riderLocationWatchRef.current) {
+            riderLocationWatchRef.current();
+            riderLocationWatchRef.current = null;
+          }
           clearActiveBooking();
           setBooking('completed');
           setBookingId(null);
@@ -315,6 +388,16 @@ const storedBooking = getActiveBooking();
         } else if (data.action === 'decline') {
           // Driver declined — keep searching, don't cancel yet
         } else if (data.action === 'cancelled') {
+          // remote cancel — tidy up listeners and clear
+          socket.off(bookingEvent);
+          if (driverLocationRef.current) {
+            socket.off('driver:locationUpdate', driverLocationRef.current);
+            driverLocationRef.current = null;
+          }
+          if (riderLocationWatchRef.current) {
+            riderLocationWatchRef.current();
+            riderLocationWatchRef.current = null;
+          }
           clearActiveBooking(); // ✅ Clear active booking when remotely cancelled
           setBooking('cancelled');
           setBookingId(null);
