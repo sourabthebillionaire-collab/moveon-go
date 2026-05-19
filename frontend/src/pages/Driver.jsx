@@ -45,6 +45,7 @@ const T = {
     decline:       'Decline',
     startTrip:     'Start Trip',
     endTrip:       'End Trip',
+    cancelRide:    'Cancel Ride',
     reportIssue:   'Report Issue',
     callControl:   'Call Control Room',
     sos:           'SOS Emergency',
@@ -90,6 +91,7 @@ const T = {
     decline:       'मना करें',
     startTrip:     'यात्रा शुरू',
     endTrip:       'यात्रा खत्म',
+    cancelRide:    'राइड रद्द करें',
     reportIssue:   'समस्या बताएं',
     callControl:   'कंट्रोल रूम कॉल',
     sos:           'SOS आपातकाल',
@@ -135,6 +137,7 @@ const T = {
     decline:       'ମନା କରନ୍ତୁ',
     startTrip:     'ଯାତ୍ରା ଆରମ୍ଭ',
     endTrip:       'ଯାତ୍ରା ଶେଷ',
+    cancelRide:    'ରାଇଡ୍ ବାତିଲ କରନ୍ତୁ',
     reportIssue:   'ସମସ୍ୟା ଜଣାନ୍ତୁ',
     callControl:   'କଣ୍ଟ୍ରୋଲ ରୁମ କଲ',
     sos:           'SOS ଜରୁରୀ',
@@ -324,6 +327,10 @@ export default function Driver() {
 
   // ── Panel: end duty ─────────────────────────────────────────
   const endDuty = async () => {
+    if (activeRide) {
+      alert('Please complete or cancel the active ride before going off duty.');
+      return;
+    }
     if (!window.confirm(t.confirmEnd)) return;
     unwatchRef.current?.(); unwatchRef.current = null;
     clearInterval(pingRef.current); pingRef.current = null;
@@ -358,8 +365,21 @@ export default function Driver() {
       setUserLocation({ lat, lng, bearing, speed });
     };
 
+    const handleBookingCancelled = ({ bookingId }) => {
+      if (!activeRide || String(bookingId) !== String(activeRide.id)) return;
+      setActiveRide(null);
+      setTripActive(false);
+      setUserLocation(null);
+      setPassengers(0);
+      alert('Passenger cancelled the booking.');
+    };
+
     socket.on('rider:locationUpdate', handleRiderLocation);
-    return () => socket.off('rider:locationUpdate', handleRiderLocation);
+    socket.on('booking:cancelled', handleBookingCancelled);
+    return () => {
+      socket.off('rider:locationUpdate', handleRiderLocation);
+      socket.off('booking:cancelled', handleBookingCancelled);
+    };
   }, [activeRide]);
 
   // ── Accept ride ─────────────────────────────────────────────
@@ -372,11 +392,10 @@ export default function Driver() {
     if (!rideReq) return;
     try {
       await api.respondToRide(rideReq.id, 'accept', getDriverToken());
-      // ✅ DO NOT call emitRideResponse here — backend handles socket emit
-      setActiveRide({ ...rideReq, id: rideReq.id });
+      // ✅ Driver accepted the booking, but pickup hasn't happened yet.
+      setActiveRide({ ...rideReq, id: rideReq.id, status: 'accepted' });
       setUserLocation(null);
-      setTripActive(true);
-      setPassengers(p => p + 1);
+      setTripActive(false);
       setRideReq(null);
       speak(
         lang === 'hi' ? 'बुकिंग स्वीकार।' :
@@ -405,19 +424,69 @@ export default function Driver() {
     }
   };
 
-  // ── End trip ────────────────────────────────────────────────
-  const endTrip = () => {
-    setTripActive(false);
-    setTripCount(c => c + 1);
-    setEarnings(e => e + (activeRide?.fareAmount || 120));
-    setActiveRide(null);
-    setUserLocation(null);
-    speak(
-      lang === 'hi' ? 'यात्रा खत्म।' :
-      lang === 'or' ? 'ଯାତ୍ରା ଶେଷ।' :
-      'Trip ended.',
-      lang,
-    );
+  const startRide = async () => {
+    if (!activeRide) return;
+    try {
+      await api.startRide(activeRide.id, getDriverToken());
+      setTripActive(true);
+      setActiveRide(prev => ({ ...(prev || {}), status: 'started' }));
+      setPassengers(p => p + 1);
+      speak(
+        lang === 'hi' ? 'यात्रा शुरू।' :
+        lang === 'or' ? 'ଯାତ୍ରା ଆରମ୍ଭ।' :
+        'Trip started.',
+        lang,
+      );
+    } catch (err) {
+      console.error('[Driver] Failed to start ride:', err);
+      alert('Failed to start the ride. Please try again.');
+    }
+  };
+
+  const completeRide = async () => {
+    if (!activeRide) return;
+    try {
+      const result = await api.completeRide(activeRide.id, getDriverToken());
+      setTripActive(false);
+      setTripCount(c => c + 1);
+      setEarnings(e => e + (result.fareAmount || activeRide?.fareAmount || 120));
+      setActiveRide(null);
+      setUserLocation(null);
+      setPassengers(0);
+      const socket = getSocket();
+      socket?.emit('trip:ended', { bookingId: activeRide.id });
+      speak(
+        lang === 'hi' ? 'यात्रा खत्म।' :
+        lang === 'or' ? 'ଯାତ୍ରା ଶେଷ।' :
+        'Trip ended.',
+        lang,
+      );
+    } catch (err) {
+      console.error('[Driver] Failed to complete ride:', err);
+      alert('Failed to complete the ride. Please try again.');
+    }
+  };
+
+  const cancelActiveRide = async () => {
+    if (!activeRide) return;
+    try {
+      await api.cancelRide(activeRide.id, getDriverToken());
+      setTripActive(false);
+      setActiveRide(null);
+      setUserLocation(null);
+      setPassengers(0);
+      const socket = getSocket();
+      socket?.emit('trip:ended', { bookingId: activeRide.id });
+      speak(
+        lang === 'hi' ? 'राइड रद्द कर दी गई।' :
+        lang === 'or' ? 'ରାଇଡ୍ ବାତିଲ ହେଲା।' :
+        'Ride cancelled.',
+        lang,
+      );
+    } catch (err) {
+      console.error('[Driver] Failed to cancel active ride:', err);
+      alert('Failed to cancel the ride. Please try again.');
+    }
   };
 
   // ── SOS ─────────────────────────────────────────────────────
@@ -634,8 +703,15 @@ export default function Driver() {
         <div className="drv-main-action">
           {!onDuty ? (
             <button className="drv-duty-btn start" onClick={startDuty}>{t.startDuty}</button>
-          ) : tripActive ? (
-            <button className="drv-duty-btn end-trip" onClick={endTrip}>{t.endTrip}</button>
+          ) : activeRide ? (
+            tripActive ? (
+              <button className="drv-duty-btn end-trip" onClick={completeRide}>{t.endTrip}</button>
+            ) : (
+              <div style={{display:'flex',gap:12}}>
+                <button className="drv-duty-btn start" style={{flex:1}} onClick={startRide}>{t.startTrip}</button>
+                <button className="drv-duty-btn end-duty" style={{flex:1}} onClick={cancelActiveRide}>{t.cancelRide}</button>
+              </div>
+            )
           ) : (
             <button className="drv-duty-btn end-duty" onClick={endDuty}>{t.endDuty}</button>
           )}

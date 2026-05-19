@@ -118,6 +118,68 @@ router.post('/:id/respond', protectDriver, asyncHandler(async (req, res) => {
   }
 }));
 
+// PUT /api/bookings/:id/start — driver starts the ride after pickup
+router.put('/:id/start', protectDriver, asyncHandler(async (req, res) => {
+  const booking = await Booking.findOneAndUpdate(
+    { _id: req.params.id, driverId: req.driver._id, status: 'accepted' },
+    { status: 'started' },
+    { new: true }
+  );
+
+  if (!booking) {
+    return res.status(404).json({ message: 'Ride cannot be started. It may have been cancelled or already started.' });
+  }
+
+  if (global.io) {
+    global.io.to(`booking:${req.params.id}`).emit(`booking:${req.params.id}`, { action: 'started' });
+  }
+
+  res.json({ message: 'Ride started.' });
+}));
+
+// PUT /api/bookings/:id/complete — driver completes the ride and earns the fare
+router.put('/:id/complete', protectDriver, asyncHandler(async (req, res) => {
+  const booking = await Booking.findOneAndUpdate(
+    { _id: req.params.id, driverId: req.driver._id, status: 'started' },
+    { status: 'completed', completedAt: new Date() },
+    { new: true }
+  );
+
+  if (!booking) {
+    return res.status(404).json({ message: 'Ride cannot be completed. It may not be started yet.' });
+  }
+
+  await Driver.updateOne({ _id: req.driver._id }, { $inc: { totalTrips: 1 } });
+
+  if (global.io) {
+    global.io.activeBookings?.delete(String(req.params.id));
+    global.io.to(`booking:${req.params.id}`).emit(`booking:${req.params.id}`, { action: 'completed' });
+  }
+
+  res.json({ message: 'Ride completed.', fareAmount: booking.fareAmount });
+}));
+
+// PUT /api/bookings/:id/cancel — driver cancels an accepted or started ride
+router.put('/:id/cancel', protectDriver, asyncHandler(async (req, res) => {
+  const booking = await Booking.findOneAndUpdate(
+    { _id: req.params.id, driverId: req.driver._id, status: { $in: ['accepted', 'started'] } },
+    { status: 'cancelled' },
+    { new: true }
+  );
+
+  if (!booking) {
+    return res.status(404).json({ message: 'Ride cannot be cancelled. It may not be assigned to you or may already be closed.' });
+  }
+
+  if (global.io) {
+    global.io.activeBookings?.delete(String(req.params.id));
+    global.io.to(`booking:${req.params.id}`).emit(`booking:${req.params.id}`, { action: 'cancelled' });
+  }
+
+  logger.info(`Driver cancelled booking: ${req.params.id}`, { driverId: req.driver._id });
+  res.json({ message: 'Ride cancelled.' });
+}));
+
 // GET /api/bookings — rider's booking history
 router.get('/', protect, asyncHandler(async (req, res) => {
   const bookings = await Booking.find({ userId: req.user._id })
@@ -156,8 +218,12 @@ router.delete('/:id', protect, asyncHandler(async (req, res) => {
       global.io.activeBookings.delete(String(req.params.id));
     }
     // ✅ FIX: Cancellation also room-targeted
-    global.io.to(`booking:${req.params.id}`).emit(`booking:${req.params.id}`, { action: 'cancelled' });
-  }
+    global.io.to(`booking:${req.params.id}`).emit(`booking:${req.params.id}`, { action: 'cancelled' });    if (booking.driverId) {
+      global.io.to(`driver:${booking.driverId}`).emit('booking:cancelled', {
+        bookingId: booking._id,
+        action: 'cancelled',
+      });
+    }  }
 
   logger.info(`Booking cancelled: ${booking._id}`, { userId: req.user._id });
   res.json({ message: 'Booking cancelled.' });

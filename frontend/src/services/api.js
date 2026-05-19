@@ -126,6 +126,14 @@ export const api = {
   getActiveBooking: (token) =>
     get('/bookings/active', token),
 
+  // Driver ride lifecycle
+  startRide: (bookingId, token) =>
+    put(`/bookings/${bookingId}/start`, null, token),
+  completeRide: (bookingId, token) =>
+    put(`/bookings/${bookingId}/complete`, null, token),
+  cancelRide: (bookingId, token) =>
+    put(`/bookings/${bookingId}/cancel`, null, token),
+
   // ── Fare ──────────────────────────────────────────────────────
   // Get fare estimate
   getFareEstimate: (from, to, vehicleType) =>

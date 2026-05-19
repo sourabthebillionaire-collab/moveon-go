@@ -83,7 +83,7 @@ const storedBooking = getActiveBooking();
 
       if (initialBooking.id || initialBooking._id) {
         setBookingId(initialBooking._id || initialBooking.id);
-        setBooking(initialBooking.status === 'accepted' ? 'found' : 'searching');
+        setBooking(['accepted', 'started'].includes(initialBooking.status) ? 'found' : 'searching');
         setType(initialBooking.type || type);
         setPickup(initialBooking.pickup || pickup);
         setPickupCoords(initialBooking.pickupCoords || pickupCoords);
@@ -299,6 +299,19 @@ const storedBooking = getActiveBooking();
             status: 'accepted',
             driver: data.driver,
           });
+        } else if (data.action === 'started') {
+          setBooking('found');
+          const currentBooking = getActiveBooking();
+          setActiveBooking({
+            ...(typeof currentBooking === 'object' && currentBooking ? currentBooking : {}),
+            status: 'started',
+          });
+        } else if (data.action === 'completed') {
+          clearActiveBooking();
+          setBooking(null);
+          setBookingId(null);
+          setDriver(null);
+          setDriverLocation(null);
         } else if (data.action === 'decline') {
           // Driver declined — keep searching, don't cancel yet
         } else if (data.action === 'cancelled') {
