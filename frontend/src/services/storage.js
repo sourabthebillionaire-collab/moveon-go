@@ -11,6 +11,7 @@ const K = {
   TRIPS:      'mg_trips',
   FAVOURITES: 'mg_favourites',
   ACTIVE_BOOKING: 'mg_active_booking',
+  ACTIVE_DRIVER_RIDE: 'mg_active_driver_ride',
 };
 
 function read(key)        { try { return JSON.parse(localStorage.getItem(key)); } catch { return null; } }
@@ -69,10 +70,23 @@ export function getActiveBooking() {
   return read(K.ACTIVE_BOOKING);
 }
 
-export function setActiveBooking(bookingId) {
-  write(K.ACTIVE_BOOKING, bookingId);
+export function setActiveBooking(booking) {
+  write(K.ACTIVE_BOOKING, booking);
 }
 
 export function clearActiveBooking() {
   remove(K.ACTIVE_BOOKING);
+}
+
+// ── Active Driver Ride ────────────────────────────────────────
+export function getActiveDriverRide() {
+  return read(K.ACTIVE_DRIVER_RIDE);
+}
+
+export function setActiveDriverRide(ride) {
+  write(K.ACTIVE_DRIVER_RIDE, ride);
+}
+
+export function clearActiveDriverRide() {
+  remove(K.ACTIVE_DRIVER_RIDE);
 }

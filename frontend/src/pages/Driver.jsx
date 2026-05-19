@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import Header from '../components/Header';
 import api from '../services/api';
 import { emitLocation, onRideRequest, connectSocket, disconnectSocket, getSocket } from '../services/socket';
-import { setDriverSession, getDriver, getDriverToken, clearDriverSession } from '../services/storage';
+import { setDriverSession, getDriver, getDriverToken, clearDriverSession, getActiveDriverRide, setActiveDriverRide, clearActiveDriverRide } from '../services/storage';
 import { watchPosition } from '../services/geocoding';
 import './Driver.css';
 
@@ -223,6 +223,15 @@ export default function Driver() {
         });
 
         await api.getDriverProfile(token);
+
+        const storedRide = getActiveDriverRide();
+        if (storedRide) {
+          setActiveRide(storedRide);
+          setOnDuty(true);
+          setTripActive(storedRide.status === 'started');
+          setPassengers(storedRide.status === 'started' ? 1 : 0);
+        }
+
         setStep('panel');
       } catch (err) {
         if (err.status === 401 || err.status === 404) {
@@ -337,6 +346,7 @@ export default function Driver() {
     gpsPosRef.current = null;
     setOnDuty(false); setGpsPos(null); setSpeed(0);
     setTripActive(false); setRideReq(null); setActiveRide(null); setUserLocation(null);
+    clearActiveDriverRide();
     try { await api.setDriverDuty(false, getDriverToken()); } catch {}
     disconnectSocket();
   };
@@ -393,7 +403,9 @@ export default function Driver() {
     try {
       await api.respondToRide(rideReq.id, 'accept', getDriverToken());
       // ✅ Driver accepted the booking, but pickup hasn't happened yet.
-      setActiveRide({ ...rideReq, id: rideReq.id, status: 'accepted' });
+      const acceptedRide = { ...rideReq, id: rideReq.id, status: 'accepted' };
+      setActiveRide(acceptedRide);
+      setActiveDriverRide(acceptedRide);
       setUserLocation(null);
       setTripActive(false);
       setRideReq(null);
@@ -428,8 +440,10 @@ export default function Driver() {
     if (!activeRide) return;
     try {
       await api.startRide(activeRide.id, getDriverToken());
+      const startedRide = { ...activeRide, status: 'started' };
       setTripActive(true);
-      setActiveRide(prev => ({ ...(prev || {}), status: 'started' }));
+      setActiveRide(startedRide);
+      setActiveDriverRide(startedRide);
       setPassengers(p => p + 1);
       speak(
         lang === 'hi' ? 'यात्रा शुरू।' :
@@ -451,6 +465,7 @@ export default function Driver() {
       setTripCount(c => c + 1);
       setEarnings(e => e + (result.fareAmount || activeRide?.fareAmount || 120));
       setActiveRide(null);
+      clearActiveDriverRide();
       setUserLocation(null);
       setPassengers(0);
       const socket = getSocket();
@@ -473,6 +488,7 @@ export default function Driver() {
       await api.cancelRide(activeRide.id, getDriverToken());
       setTripActive(false);
       setActiveRide(null);
+      clearActiveDriverRide();
       setUserLocation(null);
       setPassengers(0);
       const socket = getSocket();
@@ -506,6 +522,7 @@ export default function Driver() {
   const signOut = () => {
     endDuty().catch(() => {});
     clearDriverSession();
+    clearActiveDriverRide();
     setDriver(null);
     setStep('id');
     setVehicleId('');
@@ -690,7 +707,41 @@ export default function Driver() {
         )}
 
         {activeRide && (
-          <div className="drv-user-location-card card" style={{margin:'12px 16px',padding:'12px 14px'}}>
+          <div className="drv-active-ride-card card" style={{margin:'12px 16px',padding:'16px'}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+              <div>
+                <div style={{fontSize:13,color:'var(--gray-500)'}}>Current ride</div>
+                <div style={{fontSize:18,fontWeight:700}}>{activeRide.pickup}</div>
+              </div>
+              <div style={{fontSize:13,color:'var(--white)',background:'var(--green-700)',borderRadius:999,padding:'6px 10px'}}>
+                {activeRide.status === 'started' ? 'On Trip' : 'Accepted'}
+              </div>
+            </div>
+            <div style={{display:'flex',gap:14,marginBottom:12}}>
+              <div style={{flex:1}}>
+                <div style={{fontSize:12,color:'var(--gray-500)'}}>Pickup</div>
+                <div style={{fontSize:14,fontWeight:600}}>{activeRide.pickup}</div>
+              </div>
+              <div style={{flex:1}}>
+                <div style={{fontSize:12,color:'var(--gray-500)'}}>Drop</div>
+                <div style={{fontSize:14,fontWeight:600}}>{activeRide.dropoff}</div>
+              </div>
+            </div>
+            <div style={{display:'flex',gap:12}}>
+              <div style={{flex:1,padding:10,background:'rgba(16,185,129,0.08)',borderRadius:12}}>
+                <div style={{fontSize:12,color:'var(--gray-500)'}}>Fare</div>
+                <div style={{fontSize:14,fontWeight:700}}>{activeRide.fare || '₹--'}</div>
+              </div>
+              <div style={{flex:1,padding:10,background:'rgba(59,130,246,0.08)',borderRadius:12}}>
+                <div style={{fontSize:12,color:'var(--gray-500)'}}>Distance</div>
+                <div style={{fontSize:14,fontWeight:700}}>{activeRide.distance || '--'}</div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeRide && (
+          <div className="drv-user-location-card card" style={{margin:'0 16px 16px',padding:'12px 14px'}}>
             <div style={{fontSize:12,color:'var(--gray-500)',marginBottom:4}}>Passenger location</div>
             {userLocation ? (
               <div style={{fontSize:14,fontWeight:700}}>{userLocation.lat.toFixed(4)}, {userLocation.lng.toFixed(4)}</div>

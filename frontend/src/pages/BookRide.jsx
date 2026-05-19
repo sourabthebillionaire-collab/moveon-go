@@ -308,7 +308,7 @@ const storedBooking = getActiveBooking();
           });
         } else if (data.action === 'completed') {
           clearActiveBooking();
-          setBooking(null);
+          setBooking('completed');
           setBookingId(null);
           setDriver(null);
           setDriverLocation(null);
@@ -316,7 +316,10 @@ const storedBooking = getActiveBooking();
           // Driver declined — keep searching, don't cancel yet
         } else if (data.action === 'cancelled') {
           clearActiveBooking(); // ✅ Clear active booking when remotely cancelled
-          setBooking(null);
+          setBooking('cancelled');
+          setBookingId(null);
+          setDriver(null);
+          setDriverLocation(null);
         }
       });
       countdownRef.current = setInterval(() => {
@@ -438,6 +441,36 @@ const storedBooking = getActiveBooking();
           No {type} drivers available near you right now. Please try again in a few minutes.
         </p>
         <button className="btn btn--primary btn--full btn--lg" onClick={() => setBooking(null)}>Try Again</button>
+      </div>
+      <BottomNav/>
+    </div>
+  );
+
+  if (booking === 'cancelled') return (
+    <div className="app">
+      <Header title="Ride Cancelled" showBack onBack={() => setBooking(null)}/>
+      <div className="page" style={{padding:'40px 24px',textAlign:'center'}}>
+        <div style={{fontSize:56,marginBottom:16}}>🚫</div>
+        <h2 style={{fontSize:18,fontWeight:700,marginBottom:8}}>Your ride was cancelled</h2>
+        <p style={{color:'var(--gray-500)',fontSize:14,marginBottom:32}}>
+          The driver cancelled the ride. You can search again or choose another vehicle.
+        </p>
+        <button className="btn btn--primary btn--full btn--lg" onClick={() => setBooking(null)}>Book again</button>
+      </div>
+      <BottomNav/>
+    </div>
+  );
+
+  if (booking === 'completed') return (
+    <div className="app">
+      <Header title="Trip Completed" showBack onBack={() => setBooking(null)}/>
+      <div className="page" style={{padding:'40px 24px',textAlign:'center'}}>
+        <div style={{fontSize:56,marginBottom:16}}>✅</div>
+        <h2 style={{fontSize:18,fontWeight:700,marginBottom:8}}>Your trip is complete</h2>
+        <p style={{color:'var(--gray-500)',fontSize:14,marginBottom:32}}>
+          Thank you for riding with us. Please rate the trip or book another ride.
+        </p>
+        <button className="btn btn--primary btn--full btn--lg" onClick={() => setBooking(null)}>Book again</button>
       </div>
       <BottomNav/>
     </div>
