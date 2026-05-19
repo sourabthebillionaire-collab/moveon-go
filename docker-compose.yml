@@ -1,0 +1,27 @@
+version: '3.8'
+services:
+  mongo:
+    image: mongo:6.0
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+    ports:
+      - "27017:27017"
+
+  backend:
+    build:
+      context: ./backend
+    volumes:
+      - ./backend:/usr/src/app
+    environment:
+      - MONGODB_URI=mongodb://mongo:27017/bus-tracker
+      - JWT_SECRET=dev-secret
+      - FRONTEND_URL=http://localhost:5173
+      - NODE_ENV=development
+    ports:
+      - "3001:3001"
+    depends_on:
+      - mongo
+
+volumes:
+  mongo-data:

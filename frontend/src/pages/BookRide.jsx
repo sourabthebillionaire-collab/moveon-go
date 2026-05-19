@@ -49,6 +49,7 @@ export default function BookRide() {
   const [bookingId,     setBookingId]     = useState(null);
   const [driver,        setDriver]        = useState(null);
   const [driverLocation, setDriverLocation] = useState(null);
+  const [socketDebug, setSocketDebug] = useState([]);
   const [countdown,     setCountdown]     = useState(TIMEOUT_SECONDS);
   const [payLoading,    setPayLoading]    = useState(false);
 
@@ -125,7 +126,7 @@ const storedBooking = getActiveBooking();
       } : null;
 
       setBookingId(activeBooking._id);
-      setBooking(activeBooking.status === 'accepted' ? 'found' : 'searching');
+      setBooking(activeBooking.status === 'searching' ? 'searching' : 'found');
       setType(activeBooking.type);
       setPickup(activeBooking.pickup);
       setPickupCoords(activeBooking.pickupCoords);
@@ -350,6 +351,7 @@ const storedBooking = getActiveBooking();
 
       // Keep the booking listener active until the trip completes or is cancelled
       socket.on(bookingEvent, (data) => {
+        setSocketDebug(d => [...d.slice(-9), { t: Date.now(), e: bookingEvent, d: data }]);
         clearTimeout(timeoutRef.current);
         clearInterval(countdownRef.current);
         if (data.action === 'accept' && data.driver) {
@@ -403,6 +405,7 @@ const storedBooking = getActiveBooking();
           setBookingId(null);
           setDriver(null);
           setDriverLocation(null);
+          setSocketDebug(d => [...d.slice(-9), { t: Date.now(), e: bookingEvent, d: data }]);
         }
       });
       countdownRef.current = setInterval(() => {
@@ -509,6 +512,21 @@ const storedBooking = getActiveBooking();
           Cancelling in {countdown}s if no driver found
         </div>
         <button className="btn btn--ghost" style={{marginTop:24}} onClick={handleCancel}>Cancel</button>
+      </div>
+    </div>
+  );
+
+  // Debug panel
+  const DebugPanel = () => (
+    <div style={{ position: 'fixed', right: 8, bottom: 8, zIndex: 1000, background: 'rgba(0,0,0,0.6)', color: '#fff', padding: 8, borderRadius: 6, fontSize: 12, maxWidth: 360 }}>
+      <div style={{ fontWeight: 'bold', marginBottom: 6 }}>Socket Debug</div>
+      <div style={{ maxHeight: 160, overflow: 'auto' }}>
+        {socketDebug.length === 0 ? <div>- no events -</div> : socketDebug.slice().reverse().map((x, i) => (
+          <div key={i} style={{ marginBottom: 6 }}>
+            <div style={{ opacity: .8 }}>{new Date(x.t).toLocaleTimeString()} · {x.e}</div>
+            <pre style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{JSON.stringify(x.d, null, 2)}</pre>
+          </div>
+        ))}
       </div>
     </div>
   );

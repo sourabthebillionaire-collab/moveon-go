@@ -91,8 +91,12 @@ export function emitRiderLocation(payload) {
 export function onBookingResponse(bookingId, cb) {
   const s = getSocket();
   const eventName = `booking:${bookingId}`;
-  s.on(eventName, cb);
-  return () => s.off(eventName, cb);
+  const handler = (data) => {
+    try { console.debug('[Socket] booking event', eventName, data); } catch (e) {}
+    cb(data);
+  };
+  s.on(eventName, handler);
+  return () => s.off(eventName, handler);
 }
 
 // ── Rider: live location of accepted driver ───────────────────

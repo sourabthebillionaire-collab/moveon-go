@@ -131,7 +131,20 @@ router.put('/:id/start', protectDriver, asyncHandler(async (req, res) => {
   }
 
   if (global.io) {
-    global.io.to(`booking:${req.params.id}`).emit(`booking:${req.params.id}`, { action: 'started' });
+    const driverPayload = {
+      name:          req.driver.name,
+      phone:         req.driver.phone,
+      vehicleNumber: req.driver.vehicleNumber,
+      vehicleType:   req.driver.vehicleType,
+      rating:        req.driver.rating || 4.5,
+      eta:           '3–5 min',
+      driverId:      String(req.driver._id),
+    };
+    const payload = { action: 'started', bookingId: String(req.params.id), driverId: String(req.driver._id), driver: driverPayload };
+    logger.info(`Emitting started for booking ${req.params.id}`, { driverId: req.driver._id });
+    global.io.to(`booking:${req.params.id}`).emit(`booking:${req.params.id}`, payload);
+    // Fallback broadcast so riders who haven't joined the room still receive the event
+    global.io.emit(`booking:${req.params.id}`, payload);
   }
 
   res.json({ message: 'Ride started.' });
@@ -152,8 +165,22 @@ router.put('/:id/complete', protectDriver, asyncHandler(async (req, res) => {
   await Driver.updateOne({ _id: req.driver._id }, { $inc: { totalTrips: 1 } });
 
   if (global.io) {
+    const driverPayload = {
+      name:          req.driver.name,
+      phone:         req.driver.phone,
+      vehicleNumber: req.driver.vehicleNumber,
+      vehicleType:   req.driver.vehicleType,
+      rating:        req.driver.rating || 4.5,
+      eta:           '3–5 min',
+      driverId:      String(req.driver._id),
+    };
+    const payload = { action: 'completed', bookingId: String(req.params.id), driverId: String(req.driver._id), driver: driverPayload, fareAmount: booking.fareAmount };
+    logger.info(`Emitting completed for booking ${req.params.id}`, { driverId: req.driver._id, fareAmount: booking.fareAmount });
+    // Notify booking room and broadcast as fallback so refreshed riders receive the event
+    global.io.to(`booking:${req.params.id}`).emit(`booking:${req.params.id}`, payload);
+    global.io.emit(`booking:${req.params.id}`, payload);
+    // Remove from active bookings after notifying
     global.io.activeBookings?.delete(String(req.params.id));
-    global.io.to(`booking:${req.params.id}`).emit(`booking:${req.params.id}`, { action: 'completed' });
   }
 
   res.json({ message: 'Ride completed.', fareAmount: booking.fareAmount });
@@ -172,8 +199,11 @@ router.put('/:id/cancel', protectDriver, asyncHandler(async (req, res) => {
   }
 
   if (global.io) {
+    const payload = { action: 'cancelled', bookingId: String(req.params.id), driverId: String(req.driver._id) };
+    logger.info(`Emitting cancelled for booking ${req.params.id}`, { driverId: req.driver._id });
+    global.io.to(`booking:${req.params.id}`).emit(`booking:${req.params.id}`, payload);
+    global.io.emit(`booking:${req.params.id}`, payload);
     global.io.activeBookings?.delete(String(req.params.id));
-    global.io.to(`booking:${req.params.id}`).emit(`booking:${req.params.id}`, { action: 'cancelled' });
   }
 
   logger.info(`Driver cancelled booking: ${req.params.id}`, { driverId: req.driver._id });
@@ -217,13 +247,16 @@ router.delete('/:id', protect, asyncHandler(async (req, res) => {
     if (global.io.activeBookings) {
       global.io.activeBookings.delete(String(req.params.id));
     }
-    // ✅ FIX: Cancellation also room-targeted
-    global.io.to(`booking:${req.params.id}`).emit(`booking:${req.params.id}`, { action: 'cancelled' });    if (booking.driverId) {
+    // ✅ FIX: Cancellation also room-targeted with fallback broadcast
+    global.io.to(`booking:${req.params.id}`).emit(`booking:${req.params.id}`, { action: 'cancelled' });
+    global.io.emit(`booking:${req.params.id}`, { action: 'cancelled' });
+    if (booking.driverId) {
       global.io.to(`driver:${booking.driverId}`).emit('booking:cancelled', {
         bookingId: booking._id,
         action: 'cancelled',
       });
-    }  }
+    }
+  }
 
   logger.info(`Booking cancelled: ${booking._id}`, { userId: req.user._id });
   res.json({ message: 'Booking cancelled.' });

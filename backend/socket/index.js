@@ -17,18 +17,28 @@ module.exports = function initSocket(io) {
 
     // ✅ FIX 1 — Rider joins a dedicated room for their booking
     // Called immediately after POST /api/bookings returns a bookingId
-    socket.on('rider:joinBooking', ({ bookingId }) => {
+    socket.on('rider:joinBooking', async ({ bookingId }) => {
       if (!bookingId) return;
       socket.join(`booking:${bookingId}`);
       console.log(`[Socket] Rider joined room booking:${bookingId}`);
 
-      // If the driver already accepted (race: driver was very fast), replay it
+      // If the driver already accepted (race: driver was very fast), replay it.
+      // Provide the full driver snapshot so the rider page can restore gracefully.
       const driverId = activeBookings.get(String(bookingId));
       if (driverId) {
+        const driver = await Driver.findById(String(driverId)).select('name phone vehicleNumber vehicleType rating');
         const pos = activeVehiclePositions.get(String(driverId));
         socket.emit(`booking:${bookingId}`, {
           action:   'accept',
-          driverId,
+          driver: driver ? {
+            name:          driver.name,
+            phone:         driver.phone,
+            vehicleNumber: driver.vehicleNumber,
+            vehicleType:   driver.vehicleType,
+            rating:        driver.rating || 4.5,
+            driverId:      String(driver._id),
+            eta:           '3–5 min',
+          } : null,
           location: pos ? { lat: pos.lat, lng: pos.lng } : null,
         });
       }

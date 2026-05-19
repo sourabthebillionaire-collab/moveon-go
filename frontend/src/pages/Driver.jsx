@@ -194,6 +194,7 @@ export default function Driver() {
   const [activeRide, setActiveRide]= useState(null);
   const [userLocation, setUserLocation] = useState(null);
   const [issueSheet, setIssueSheet]= useState(false);
+  const [socketDebug, setSocketDebug] = useState([]);
   const unwatchRef   = useRef(null);
   const pingRef      = useRef(null);
   const gpsPosRef    = useRef(null); // keep GPS pos accessible in interval closure
@@ -373,6 +374,7 @@ export default function Driver() {
     const handleRiderLocation = ({ bookingId, lat, lng, bearing, speed }) => {
       if (!activeRide || String(bookingId) !== String(activeRide.id)) return;
       setUserLocation({ lat, lng, bearing, speed });
+      setSocketDebug(d => [...d.slice(-9), { t: Date.now(), e: 'rider:location', d: { bookingId, lat, lng, bearing, speed } }]);
     };
 
     const handleBookingCancelled = ({ bookingId }) => {
@@ -382,6 +384,7 @@ export default function Driver() {
       setUserLocation(null);
       setPassengers(0);
       alert('Passenger cancelled the booking.');
+      setSocketDebug(d => [...d.slice(-9), { t: Date.now(), e: 'booking:cancelled', d: { bookingId } }]);
     };
 
     socket.on('rider:locationUpdate', handleRiderLocation);
@@ -588,6 +591,21 @@ export default function Driver() {
     </div>
   );
 
+  // Debug panel for driver
+  const DebugPanel = () => (
+    <div style={{ position: 'fixed', right: 8, bottom: 8, zIndex: 1000, background: 'rgba(0,0,0,0.6)', color: '#fff', padding: 8, borderRadius: 6, fontSize: 12, maxWidth: 360 }}>
+      <div style={{ fontWeight: 'bold', marginBottom: 6 }}>Driver Socket Debug</div>
+      <div style={{ maxHeight: 160, overflow: 'auto' }}>
+        {socketDebug.length === 0 ? <div>- no events -</div> : socketDebug.slice().reverse().map((x, i) => (
+          <div key={i} style={{ marginBottom: 6 }}>
+            <div style={{ opacity: .8 }}>{new Date(x.t).toLocaleTimeString()} · {x.e}</div>
+            <pre style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{JSON.stringify(x.d, null, 2)}</pre>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
   // ── Render: Step 2 — PIN ────────────────────────────────────
   if (step === 'pin') return (
     <div className="app">
@@ -768,6 +786,30 @@ export default function Driver() {
           )}
         </div>
 
+        {onDuty && activeRide && (
+          <div className="drv-debug-panel card" style={{margin:'0 16px 16px',padding:'14px',background:'rgba(255,255,255,0.08)',border:'1px solid rgba(255,255,255,0.08)'}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+              <div style={{fontSize:13,fontWeight:700}}>Driver debug controls</div>
+              <span style={{fontSize:12,color:'var(--gray-400)'}}>{activeRide.status?.toUpperCase() || 'N/A'}</span>
+            </div>
+            <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
+              {!tripActive && (
+                <button className="btn btn--primary" style={{flex:1,minWidth:120}} onClick={startRide}>
+                  Start trip
+                </button>
+              )}
+              {tripActive && (
+                <button className="btn btn--success" style={{flex:1,minWidth:120}} onClick={completeRide}>
+                  Complete trip
+                </button>
+              )}
+              <button className="btn btn--danger" style={{flex:1,minWidth:120}} onClick={cancelActiveRide}>
+                Cancel ride
+              </button>
+            </div>
+          </div>
+        )}
+
         {onDuty && (
           <div className="drv-actions">
             <button className="drv-action-btn" onClick={() => setIssueSheet(true)}>
@@ -803,6 +845,8 @@ export default function Driver() {
           </div>
         )}
       </div>
+
+      <DebugPanel />
 
       {rideReq && (
         <>
