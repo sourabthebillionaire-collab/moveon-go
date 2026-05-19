@@ -73,46 +73,91 @@ export default function BookRide() {
   useEffect(() => {
     (async () => {
       try {
-        const activeBookingId = getActiveBooking();
-        if (!activeBookingId) return;
+const storedBooking = getActiveBooking();
+      if (!storedBooking) return;
 
-        const result = await api.getActiveBooking(getToken());
-        const activeBooking = result?.booking;
-        if (!activeBooking) {
-          clearActiveBooking();
-          return;
-        }
+      // Restore immediately from localStorage so accepted booking remains visible
+      const initialBooking = typeof storedBooking === 'string'
+        ? { id: storedBooking }
+        : storedBooking;
 
-        // ✅ Restore booking state
-        setBookingId(activeBooking._id);
-        setBooking(activeBooking.status === 'accepted' ? 'found' : 'searching');
-        setType(activeBooking.type);
-        setPickup(activeBooking.pickup);
-        setPickupCoords(activeBooking.pickupCoords);
-        setDropoff(activeBooking.dropoff);
-        setDropoffCoords(activeBooking.dropoffCoords);
-        setPayment(activeBooking.payment);
-        setFare({
-          min: activeBooking.fareAmount,
-          max: activeBooking.fareAmount,
-          amount: activeBooking.fareAmount,
-          display: activeBooking.fare
-        });
-
-        // If driver accepted, show driver details
-        if (activeBooking.driverId) {
-          setDriver({
-            driverId: activeBooking.driverId._id,
-            name: activeBooking.driverId.name,
-            phone: activeBooking.driverId.phone,
-            vehicleNumber: activeBooking.driverId.vehicleNumber,
-            rating: activeBooking.driverId.rating,
-            eta: activeBooking.eta || '3–5 min'
+      if (initialBooking.id || initialBooking._id) {
+        setBookingId(initialBooking._id || initialBooking.id);
+        setBooking(initialBooking.status === 'accepted' ? 'found' : 'searching');
+        setType(initialBooking.type || type);
+        setPickup(initialBooking.pickup || pickup);
+        setPickupCoords(initialBooking.pickupCoords || pickupCoords);
+        setDropoff(initialBooking.dropoff || dropoff);
+        setDropoffCoords(initialBooking.dropoffCoords || dropoffCoords);
+        setPayment(initialBooking.payment || payment);
+        if (initialBooking.fareAmount != null) {
+          setFare({
+            min: initialBooking.fareAmount,
+            max: initialBooking.fareAmount,
+            amount: initialBooking.fareAmount,
+            display: initialBooking.fare || `₹${initialBooking.fareAmount}`
           });
-          driverIdRef.current = activeBooking.driverId._id;
         }
+        if (initialBooking.driver) {
+          setDriver(initialBooking.driver);
+          driverIdRef.current = initialBooking.driver.driverId || initialBooking.driver.driverId;
+        }
+      }
 
-        // Re-establish socket listeners
+      const result = await api.getActiveBooking(getToken());
+      const activeBooking = result?.booking;
+      if (!activeBooking) {
+        clearActiveBooking();
+        setBooking(null);
+        setBookingId(null);
+        setDriver(null);
+        return;
+      }
+
+      // ✅ Refresh booking state from backend
+      const activeDriver = activeBooking.driverId ? {
+        driverId: activeBooking.driverId._id,
+        name: activeBooking.driverId.name,
+        phone: activeBooking.driverId.phone,
+        vehicleNumber: activeBooking.driverId.vehicleNumber,
+        rating: activeBooking.driverId.rating,
+        eta: activeBooking.eta || '3–5 min'
+      } : null;
+
+      setBookingId(activeBooking._id);
+      setBooking(activeBooking.status === 'accepted' ? 'found' : 'searching');
+      setType(activeBooking.type);
+      setPickup(activeBooking.pickup);
+      setPickupCoords(activeBooking.pickupCoords);
+      setDropoff(activeBooking.dropoff);
+      setDropoffCoords(activeBooking.dropoffCoords);
+      setPayment(activeBooking.payment);
+      setFare({
+        min: activeBooking.fareAmount,
+        max: activeBooking.fareAmount,
+        amount: activeBooking.fareAmount,
+        display: activeBooking.fare
+      });
+      if (activeDriver) {
+        setDriver(activeDriver);
+        driverIdRef.current = activeDriver.driverId;
+      }
+      setActiveBooking({
+        id: activeBooking._id,
+        status: activeBooking.status,
+        type: activeBooking.type,
+        pickup: activeBooking.pickup,
+        pickupCoords: activeBooking.pickupCoords,
+        dropoff: activeBooking.dropoff,
+        dropoffCoords: activeBooking.dropoffCoords,
+        payment: activeBooking.payment,
+        fareAmount: activeBooking.fareAmount,
+        fare: activeBooking.fare,
+        driver: activeDriver,
+        eta: activeBooking.eta,
+      });
+
+      // Re-establish socket listeners
         const socket = connectSocket();
         if (socket.connected) {
           socket.emit('rider:joinBooking', { bookingId: activeBooking._id });
@@ -208,7 +253,12 @@ export default function BookRide() {
       if (!b?.id) throw new Error('No booking ID returned');
       addBooking(b);
       setBookingId(b.id);
-      setActiveBooking(b.id); // ✅ Store active booking so it persists across page reloads
+      setActiveBooking({
+        id: b.id,
+        status: b.status,
+        type, pickup, pickupCoords, dropoff, dropoffCoords,
+        payment, fareAmount, fare: bk.fare,
+      });
       const socket = connectSocket();
 
       // ✅ JOIN the booking room so backend can target this socket.
@@ -243,6 +293,12 @@ export default function BookRide() {
           setDriver(data.driver);
           driverIdRef.current = data.driver.driverId;
           setBooking('found');
+          const currentBooking = getActiveBooking();
+          setActiveBooking({
+            ...(typeof currentBooking === 'object' && currentBooking ? currentBooking : {}),
+            status: 'accepted',
+            driver: data.driver,
+          });
         } else if (data.action === 'decline') {
           // Driver declined — keep searching, don't cancel yet
         } else if (data.action === 'cancelled') {
