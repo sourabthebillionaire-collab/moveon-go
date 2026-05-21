@@ -1,9 +1,9 @@
 const { Driver } = require('../models');
 
 module.exports = function initSocket(io) {
-  const connectedDrivers       = new Map(); // socketId → driverId
-  const activeVehiclePositions = new Map(); // driverId → latest position
-  const activeBookings         = new Map(); // bookingId → driverId (set on accept)
+  const connectedDrivers       = new Map(); // socketId  → driverId
+  const activeVehiclePositions = new Map(); // driverId  → latest position
+  const activeBookings         = new Map(); // bookingId → driverId
   io.activeBookings = activeBookings;
 
   io.on('connection', (socket) => {
@@ -15,21 +15,21 @@ module.exports = function initSocket(io) {
       socket.emit('vehicles:snapshot', snapshot);
     });
 
-    // ✅ FIX 1 — Rider joins a dedicated room for their booking
-    // Called immediately after POST /api/bookings returns a bookingId
+    // Rider joins a dedicated room for their booking.
+    // Called immediately after POST /api/bookings returns a bookingId.
+    // If the driver already accepted (race condition), replay the accept event.
     socket.on('rider:joinBooking', async ({ bookingId }) => {
       if (!bookingId) return;
       socket.join(`booking:${bookingId}`);
       console.log(`[Socket] Rider joined room booking:${bookingId}`);
 
-      // If the driver already accepted (race: driver was very fast), replay it.
-      // Provide the full driver snapshot so the rider page can restore gracefully.
       const driverId = activeBookings.get(String(bookingId));
       if (driverId) {
-        const driver = await Driver.findById(String(driverId)).select('name phone vehicleNumber vehicleType rating');
+        const driver = await Driver.findById(String(driverId))
+          .select('name phone vehicleNumber vehicleType rating');
         const pos = activeVehiclePositions.get(String(driverId));
         socket.emit(`booking:${bookingId}`, {
-          action:   'accept',
+          action: 'accept',
           driver: driver ? {
             name:          driver.name,
             phone:         driver.phone,
@@ -48,7 +48,7 @@ module.exports = function initSocket(io) {
     socket.on('driver:register', ({ driverId }) => {
       if (!driverId) return;
       connectedDrivers.set(socket.id, String(driverId));
-      socket.join(`driver:${driverId}`);
+      socket.join(`driver:${String(driverId)}`);
       console.log(`[Socket] Driver registered: ${driverId}`);
     });
 
@@ -87,7 +87,7 @@ module.exports = function initSocket(io) {
       // Broadcast to all riders (map view)
       io.emit('vehicles:update', posPayload);
 
-      // ✅ FIX 2 — Also push live location to the specific booking room
+      // Also push live location to the specific booking room
       // so the matched rider gets precise driver tracking after accept
       for (const [bookingId, bDriverId] of activeBookings.entries()) {
         if (String(bDriverId) === String(driverId)) {
@@ -104,7 +104,7 @@ module.exports = function initSocket(io) {
       }
     });
 
-    // ── Rider: live location updates for accepted booking ─────────
+    // ── Rider: live location updates for accepted booking ──────
     socket.on('rider:location', (data) => {
       const { bookingId, lat, lng, bearing, speed } = data || {};
       if (!bookingId || lat == null || lng == null) return;
@@ -115,28 +115,37 @@ module.exports = function initSocket(io) {
       });
     });
 
-    // ✅ FIX 3 — ride:respond is now a FALLBACK ONLY path
-    // The primary path is HTTP POST /api/bookings/:id/respond which
-    // emits to the room with full driver details via global.io.
-    // This handler covers the edge case where the HTTP call fails but
-    // the socket is still alive. It emits to the ROOM (not broadcast).
+    // Fallback path for ride respond (HTTP is the primary path).
+    // Covers the edge case where the HTTP call fails but socket is alive.
     socket.on('ride:respond', ({ rideId, action, driver }) => {
       if (!rideId || !action) return;
-
       if (action === 'accept') {
         const driverId = connectedDrivers.get(socket.id);
         if (driverId) activeBookings.set(String(rideId), driverId);
       }
-
       io.to(`booking:${rideId}`).emit(`booking:${rideId}`, {
         action,
         driver: driver || null,
       });
     });
 
-    // ── Trip ended — clean up booking tracking ─────────────────
+    // ── BUG FIX #1 ─────────────────────────────────────────────
+    // trip:ended was previously only cleaning up activeBookings but
+    // NOT notifying the rider. Now it emits a 'completed' event to
+    // the booking room so the rider sees "Trip Completed" screen.
+    // Note: the HTTP PUT /complete route also emits this — trip:ended
+    // is a safety net for edge cases (driver app crash recovery, etc).
     socket.on('trip:ended', ({ bookingId }) => {
-      if (bookingId) activeBookings.delete(String(bookingId));
+      if (!bookingId) return;
+      const driverId = activeBookings.get(String(bookingId));
+      // Notify the rider's booking room
+      io.to(`booking:${bookingId}`).emit(`booking:${bookingId}`, {
+        action:    'completed',
+        bookingId: String(bookingId),
+        driverId:  driverId ? String(driverId) : null,
+      });
+      activeBookings.delete(String(bookingId));
+      console.log(`[Socket] trip:ended for booking ${bookingId} — rider notified`);
     });
 
     // ── Disconnect ─────────────────────────────────────────────
@@ -146,10 +155,25 @@ module.exports = function initSocket(io) {
         connectedDrivers.delete(socket.id);
         activeVehiclePositions.delete(String(driverId));
 
-        // Remove from any active booking
+        // ── BUG FIX #2 ───────────────────────────────────────────
+        // Previously: disconnect only deleted from activeBookings +
+        // emitted driver:offline globally. The rider had NO listener
+        // for driver:offline, so they were stuck on "Driver Found"
+        // forever if the driver disconnected mid-ride.
+        //
+        // Now: we find the affected booking, emit a 'driver_offline'
+        // action directly to that booking room, THEN broadcast
+        // driver:offline for map cleanup.
         for (const [bookingId, bDriverId] of activeBookings.entries()) {
           if (String(bDriverId) === String(driverId)) {
+            // Notify the specific rider — driver went offline
+            io.to(`booking:${bookingId}`).emit(`booking:${bookingId}`, {
+              action:    'driver_offline',
+              bookingId: String(bookingId),
+              driverId:  String(driverId),
+            });
             activeBookings.delete(bookingId);
+            console.log(`[Socket] Driver ${driverId} disconnected mid-ride — rider for booking ${bookingId} notified`);
             break;
           }
         }
@@ -175,6 +199,24 @@ module.exports = function initSocket(io) {
       for (const d of stale) {
         await Driver.updateOne({ _id: d._id }, { status: 'offline', onDuty: false });
         activeVehiclePositions.delete(String(d._id));
+
+        // ── BUG FIX #3 ───────────────────────────────────────────
+        // Stale-driver cleanup also needs to notify any active rider.
+        // Previously this only did io.emit('driver:offline') which
+        // riders had no handler for in their booking context.
+        for (const [bookingId, bDriverId] of activeBookings.entries()) {
+          if (String(bDriverId) === String(d._id)) {
+            io.to(`booking:${bookingId}`).emit(`booking:${bookingId}`, {
+              action:    'driver_offline',
+              bookingId: String(bookingId),
+              driverId:  String(d._id),
+            });
+            activeBookings.delete(bookingId);
+            console.log(`[Socket] Stale driver ${d._id} — rider for booking ${bookingId} notified`);
+            break;
+          }
+        }
+
         io.emit('driver:offline', { driverId: d._id });
       }
     } catch {}

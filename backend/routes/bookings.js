@@ -92,12 +92,8 @@ router.post('/:id/respond', protectDriver, asyncHandler(async (req, res) => {
 
       const eventPayload = { action: 'accept', driver: driverPayload };
 
-      // Emit to booking room (riders who joined via rider:joinBooking)
+      // Emit to booking room (targeted) + fallback broadcast
       global.io.to(`booking:${bookingId}`).emit(`booking:${bookingId}`, eventPayload);
-
-      // ✅ ALSO broadcast to ALL as fallback — rider's socket.on('booking:'+id)
-      // filters by event name so other sockets silently ignore it.
-      // Guarantees delivery even if rider:joinBooking emit was lost or delayed.
       global.io.emit(`booking:${bookingId}`, eventPayload);
     }
 
@@ -110,7 +106,6 @@ router.post('/:id/respond', protectDriver, asyncHandler(async (req, res) => {
     logger.info(`Booking declined: ${bookingId}`, { driverId: req.driver._id });
 
     if (global.io) {
-      // ✅ FIX: Decline also goes to the room, not broadcast
       global.io.to(`booking:${bookingId}`).emit(`booking:${bookingId}`, { action: 'decline' });
     }
 
@@ -140,17 +135,21 @@ router.put('/:id/start', protectDriver, asyncHandler(async (req, res) => {
       eta:           '3–5 min',
       driverId:      String(req.driver._id),
     };
-    const payload = { action: 'started', bookingId: String(req.params.id), driverId: String(req.driver._id), driver: driverPayload };
+    const payload = {
+      action:    'started',
+      bookingId: String(req.params.id),
+      driverId:  String(req.driver._id),
+      driver:    driverPayload,
+    };
     logger.info(`Emitting started for booking ${req.params.id}`, { driverId: req.driver._id });
     global.io.to(`booking:${req.params.id}`).emit(`booking:${req.params.id}`, payload);
-    // Fallback broadcast so riders who haven't joined the room still receive the event
     global.io.emit(`booking:${req.params.id}`, payload);
   }
 
   res.json({ message: 'Ride started.' });
 }));
 
-// PUT /api/bookings/:id/complete — driver completes the ride and earns the fare
+// PUT /api/bookings/:id/complete — driver completes the ride
 router.put('/:id/complete', protectDriver, asyncHandler(async (req, res) => {
   const booking = await Booking.findOneAndUpdate(
     { _id: req.params.id, driverId: req.driver._id, status: 'started' },
@@ -174,12 +173,16 @@ router.put('/:id/complete', protectDriver, asyncHandler(async (req, res) => {
       eta:           '3–5 min',
       driverId:      String(req.driver._id),
     };
-    const payload = { action: 'completed', bookingId: String(req.params.id), driverId: String(req.driver._id), driver: driverPayload, fareAmount: booking.fareAmount };
+    const payload = {
+      action:     'completed',
+      bookingId:  String(req.params.id),
+      driverId:   String(req.driver._id),
+      driver:     driverPayload,
+      fareAmount: booking.fareAmount,
+    };
     logger.info(`Emitting completed for booking ${req.params.id}`, { driverId: req.driver._id, fareAmount: booking.fareAmount });
-    // Notify booking room and broadcast as fallback so refreshed riders receive the event
     global.io.to(`booking:${req.params.id}`).emit(`booking:${req.params.id}`, payload);
     global.io.emit(`booking:${req.params.id}`, payload);
-    // Remove from active bookings after notifying
     global.io.activeBookings?.delete(String(req.params.id));
   }
 
@@ -199,7 +202,11 @@ router.put('/:id/cancel', protectDriver, asyncHandler(async (req, res) => {
   }
 
   if (global.io) {
-    const payload = { action: 'cancelled', bookingId: String(req.params.id), driverId: String(req.driver._id) };
+    const payload = {
+      action:    'cancelled',
+      bookingId: String(req.params.id),
+      driverId:  String(req.driver._id),
+    };
     logger.info(`Emitting cancelled for booking ${req.params.id}`, { driverId: req.driver._id });
     global.io.to(`booking:${req.params.id}`).emit(`booking:${req.params.id}`, payload);
     global.io.emit(`booking:${req.params.id}`, payload);
@@ -230,7 +237,7 @@ router.get('/active', protect, asyncHandler(async (req, res) => {
   res.json({ booking: booking || null });
 }));
 
-// DELETE /api/bookings/:id — cancel booking
+// DELETE /api/bookings/:id — rider cancels booking
 router.delete('/:id', protect, asyncHandler(async (req, res) => {
   const booking = await Booking.findOneAndUpdate(
     { _id: req.params.id, userId: req.user._id, status: { $in: ['searching', 'accepted'] } },
@@ -247,14 +254,35 @@ router.delete('/:id', protect, asyncHandler(async (req, res) => {
     if (global.io.activeBookings) {
       global.io.activeBookings.delete(String(req.params.id));
     }
-    // ✅ FIX: Cancellation also room-targeted with fallback broadcast
+
+    // Notify the rider's own booking room
     global.io.to(`booking:${req.params.id}`).emit(`booking:${req.params.id}`, { action: 'cancelled' });
     global.io.emit(`booking:${req.params.id}`, { action: 'cancelled' });
+
+    // ── BUG FIX #4 ─────────────────────────────────────────────
+    // Previously: when booking.status was 'searching', booking.driverId
+    // is null, so the driver:${driverId} emit was skipped entirely.
+    // The driver would never know the rider cancelled during the search
+    // phase and would keep seeing the ride request card indefinitely.
+    //
+    // Fix: always broadcast 'ride:cancelled' to ALL drivers when the
+    // booking is in 'searching' state (no specific driver assigned yet).
+    // When a specific driver is assigned, we still target their room.
     if (booking.driverId) {
-      global.io.to(`driver:${booking.driverId}`).emit('booking:cancelled', {
-        bookingId: booking._id,
-        action: 'cancelled',
+      // Accepted ride — notify the specific assigned driver
+      global.io.to(`driver:${String(booking.driverId)}`).emit('booking:cancelled', {
+        bookingId: String(booking._id),
+        action:    'cancelled',
       });
+      logger.info(`Rider cancelled — notified assigned driver ${booking.driverId}`, { bookingId: booking._id });
+    } else {
+      // Searching state — broadcast to all drivers so any driver who
+      // received this ride:request knows it's been withdrawn
+      global.io.emit('ride:cancelled', {
+        bookingId: String(booking._id),
+        id:        String(booking._id),
+      });
+      logger.info(`Rider cancelled during search — broadcast ride:cancelled`, { bookingId: booking._id });
     }
   }
 

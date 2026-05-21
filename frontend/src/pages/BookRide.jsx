@@ -228,6 +228,21 @@ const storedBooking = getActiveBooking();
             setBookingId(null);
             setDriver(null);
             setDriverLocation(null);
+          } else if (data.action === 'driver_offline') {
+            socket.off(bookingEvent);
+            if (driverLocationRef.current) {
+              socket.off('driver:locationUpdate', driverLocationRef.current);
+              driverLocationRef.current = null;
+            }
+            if (riderLocationWatchRef.current) {
+              riderLocationWatchRef.current();
+              riderLocationWatchRef.current = null;
+            }
+            clearActiveBooking();
+            setBooking('driver_offline');
+            setBookingId(null);
+            setDriver(null);
+            setDriverLocation(null);
           }
         });
 
@@ -349,11 +364,13 @@ const storedBooking = getActiveBooking();
       driverLocationRef.current = driverLocationHandler;
       socket.on('driver:locationUpdate', driverLocationHandler);
 
-      // Keep the booking listener active until the trip completes or is cancelled
-      socket.on(bookingEvent, (data) => {
+      // Keep the booking listener active until the trip completes or is cancelled.
+      // Named function so socket.off() removes exactly this handler, not all listeners.
+      const bookingHandler = (data) => {
         setSocketDebug(d => [...d.slice(-9), { t: Date.now(), e: bookingEvent, d: data }]);
         clearTimeout(timeoutRef.current);
         clearInterval(countdownRef.current);
+
         if (data.action === 'accept' && data.driver) {
           setDriver(data.driver);
           driverIdRef.current = data.driver.driverId;
@@ -364,6 +381,7 @@ const storedBooking = getActiveBooking();
             status: 'accepted',
             driver: data.driver,
           });
+
         } else if (data.action === 'started') {
           setBooking('found');
           const currentBooking = getActiveBooking();
@@ -371,9 +389,9 @@ const storedBooking = getActiveBooking();
             ...(typeof currentBooking === 'object' && currentBooking ? currentBooking : {}),
             status: 'started',
           });
+
         } else if (data.action === 'completed') {
-          // trip finished — tidy up listeners and local state
-          socket.off(bookingEvent);
+          socket.off(bookingEvent, bookingHandler);
           if (driverLocationRef.current) {
             socket.off('driver:locationUpdate', driverLocationRef.current);
             driverLocationRef.current = null;
@@ -387,11 +405,12 @@ const storedBooking = getActiveBooking();
           setBookingId(null);
           setDriver(null);
           setDriverLocation(null);
+
         } else if (data.action === 'decline') {
-          // Driver declined — keep searching, don't cancel yet
+          // Driver declined — keep searching, don't cancel the booking
+
         } else if (data.action === 'cancelled') {
-          // remote cancel — tidy up listeners and clear
-          socket.off(bookingEvent);
+          socket.off(bookingEvent, bookingHandler);
           if (driverLocationRef.current) {
             socket.off('driver:locationUpdate', driverLocationRef.current);
             driverLocationRef.current = null;
@@ -400,14 +419,42 @@ const storedBooking = getActiveBooking();
             riderLocationWatchRef.current();
             riderLocationWatchRef.current = null;
           }
-          clearActiveBooking(); // ✅ Clear active booking when remotely cancelled
+          clearActiveBooking();
           setBooking('cancelled');
           setBookingId(null);
           setDriver(null);
           setDriverLocation(null);
-          setSocketDebug(d => [...d.slice(-9), { t: Date.now(), e: bookingEvent, d: data }]);
+
+        } else if (data.action === 'driver_offline') {
+          // ── BUG FIX F ─────────────────────────────────────────
+          // Previously: BookRide.jsx had ZERO handler for driver going
+          // offline mid-ride. The rider would be stuck on "Driver Found"
+          // forever with no recourse.
+          //
+          // Now: index.js disconnect handler emits { action: 'driver_offline' }
+          // to the booking room, and we handle it here — clean up listeners,
+          // clear state, and show the "cancelled" screen with a clear message.
+          socket.off(bookingEvent, bookingHandler);
+          if (driverLocationRef.current) {
+            socket.off('driver:locationUpdate', driverLocationRef.current);
+            driverLocationRef.current = null;
+          }
+          if (riderLocationWatchRef.current) {
+            riderLocationWatchRef.current();
+            riderLocationWatchRef.current = null;
+          }
+          clearActiveBooking();
+          // Reuse 'cancelled' screen — the UI copy already says
+          // "The driver cancelled the ride. You can search again."
+          // which is accurate enough. Alternatively set a dedicated state.
+          setBooking('driver_offline');
+          setBookingId(null);
+          setDriver(null);
+          setDriverLocation(null);
         }
-      });
+      };
+
+      socket.on(bookingEvent, bookingHandler);
       countdownRef.current = setInterval(() => {
         setCountdown(prev => { if (prev <= 1) { clearInterval(countdownRef.current); return 0; } return prev - 1; });
       }, 1000);
@@ -483,6 +530,16 @@ const storedBooking = getActiveBooking();
       riderLocationWatchRef.current();
       riderLocationWatchRef.current = null;
     }
+    // ── BUG FIX G ─────────────────────────────────────────────
+    // CRITICAL ORDER: call the API FIRST, THEN remove socket listeners.
+    // Previously listeners were torn down before api.cancelBooking(),
+    // so if the backend emitted booking:cancelled as an echo, the listener
+    // was already gone. More importantly, if the HTTP call failed we'd
+    // still clear UI leaving the driver in a broken "accepted" state.
+    // Now: HTTP cancel first (backend notifies driver), then clean up.
+    if (bookingId) {
+      try { await api.cancelBooking(bookingId, getToken()); } catch {}
+    }
     const socket = getSocket();
     if (socket && bookingId) {
       socket.off(`booking:${bookingId}`);
@@ -491,8 +548,7 @@ const storedBooking = getActiveBooking();
         driverLocationRef.current = null;
       }
     }
-    if (bookingId) { try { await api.cancelBooking(bookingId, getToken()); } catch {} }
-    clearActiveBooking(); // ✅ Clear active booking when cancelled
+    clearActiveBooking();
     setBooking(null); setBookingId(null); setDriver(null); setDriverLocation(null); setPayLoading(false);
   };
 
@@ -542,6 +598,22 @@ const storedBooking = getActiveBooking();
           No {type} drivers available near you right now. Please try again in a few minutes.
         </p>
         <button className="btn btn--primary btn--full btn--lg" onClick={() => setBooking(null)}>Try Again</button>
+      </div>
+      <BottomNav/>
+    </div>
+  );
+
+  // ── Driver went offline mid-ride ────────────────────────────
+  if (booking === 'driver_offline') return (
+    <div className="app">
+      <Header title="Driver Unavailable" showBack onBack={() => setBooking(null)}/>
+      <div className="page" style={{padding:'40px 24px',textAlign:'center'}}>
+        <div style={{fontSize:56,marginBottom:16}}>📵</div>
+        <h2 style={{fontSize:18,fontWeight:700,marginBottom:8}}>Driver went offline</h2>
+        <p style={{color:'var(--gray-500)',fontSize:14,marginBottom:32}}>
+          Your driver lost connection. Please book again — we're sorry for the inconvenience.
+        </p>
+        <button className="btn btn--primary btn--full btn--lg" onClick={() => setBooking(null)}>Book Again</button>
       </div>
       <BottomNav/>
     </div>

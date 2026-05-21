@@ -371,29 +371,93 @@ export default function Driver() {
     const socket = getSocket();
     if (!socket) return;
 
+    // ── BUG FIX A ───────────────────────────────────────────────
+    // Rider location handler — unchanged, just made explicit
     const handleRiderLocation = ({ bookingId, lat, lng, bearing, speed }) => {
-      if (!activeRide || String(bookingId) !== String(activeRide.id)) return;
+      if (!activeRide) return;
+      // Compare both as strings — activeRide.id comes from rideReq.id
+      // which is the MongoDB _id cast through JSON, always a string.
+      if (String(bookingId) !== String(activeRide.id)) return;
       setUserLocation({ lat, lng, bearing, speed });
-      setSocketDebug(d => [...d.slice(-9), { t: Date.now(), e: 'rider:location', d: { bookingId, lat, lng, bearing, speed } }]);
+      setSocketDebug(d => [...d.slice(-9), {
+        t: Date.now(), e: 'rider:locationUpdate',
+        d: { bookingId, lat, lng, bearing, speed },
+      }]);
     };
 
+    // ── BUG FIX B ───────────────────────────────────────────────
+    // The old handler only listened on 'booking:cancelled' which is
+    // the event emitted to driver:${driverId} room when rider cancels
+    // an ACCEPTED ride. But:
+    //   1. The event payload has { bookingId, action } — the old code
+    //      destructured only { bookingId } which is fine.
+    //   2. When booking is in 'searching' state, driverId is null on
+    //      the booking, so the old bookings.js never emitted to the
+    //      driver room at all. We've now fixed bookings.js to emit
+    //      'ride:cancelled' (broadcast) for searching-state cancels.
+    //      This handler picks that up.
     const handleBookingCancelled = ({ bookingId }) => {
-      if (!activeRide || String(bookingId) !== String(activeRide.id)) return;
+      if (!activeRide) return;
+      if (String(bookingId) !== String(activeRide.id)) return;
+      clearActiveDriverRide();
       setActiveRide(null);
       setTripActive(false);
       setUserLocation(null);
       setPassengers(0);
+      setSocketDebug(d => [...d.slice(-9), {
+        t: Date.now(), e: 'booking:cancelled', d: { bookingId },
+      }]);
+      speak(
+        lang === 'hi' ? 'यात्री ने राइड रद्द की।' :
+        lang === 'or' ? 'ଯାତ୍ରୀ ରାଇଡ ବାତିଲ କଲେ।' :
+        'Passenger cancelled the ride.',
+        lang,
+      );
       alert('Passenger cancelled the booking.');
-      setSocketDebug(d => [...d.slice(-9), { t: Date.now(), e: 'booking:cancelled', d: { bookingId } }]);
+    };
+
+    // ── BUG FIX C ───────────────────────────────────────────────
+    // Handle rider cancellation DURING searching phase.
+    // The fixed bookings.js now emits 'ride:cancelled' (broadcast)
+    // when no driver is assigned yet. This dismisses the ride request
+    // card so the driver doesn't try to accept an already-cancelled ride.
+    const handleRideCancelled = ({ bookingId, id }) => {
+      const cancelledId = bookingId || id;
+      if (!cancelledId) return;
+      // Dismiss pending ride request if it matches
+      setRideReq(prev => {
+        if (prev && String(prev.id) === String(cancelledId)) {
+          setSocketDebug(d => [...d.slice(-9), {
+            t: Date.now(), e: 'ride:cancelled (search phase)', d: { cancelledId },
+          }]);
+          return null; // dismiss the request card
+        }
+        return prev;
+      });
+      // Also clear active ride if driver somehow accepted it simultaneously
+      setActiveRide(prev => {
+        if (prev && String(prev.id) === String(cancelledId)) {
+          clearActiveDriverRide();
+          setTripActive(false);
+          setUserLocation(null);
+          setPassengers(0);
+          return null;
+        }
+        return prev;
+      });
     };
 
     socket.on('rider:locationUpdate', handleRiderLocation);
-    socket.on('booking:cancelled', handleBookingCancelled);
+    socket.on('booking:cancelled',    handleBookingCancelled);
+    socket.on('ride:cancelled',       handleRideCancelled);
+
     return () => {
       socket.off('rider:locationUpdate', handleRiderLocation);
-      socket.off('booking:cancelled', handleBookingCancelled);
+      socket.off('booking:cancelled',    handleBookingCancelled);
+      socket.off('ride:cancelled',       handleRideCancelled);
     };
-  }, [activeRide]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeRide, lang]);
 
   // ── Accept ride ─────────────────────────────────────────────
   // ✅ FIXED: Only the HTTP call is made here.
@@ -462,17 +526,24 @@ export default function Driver() {
 
   const completeRide = async () => {
     if (!activeRide) return;
+    // ── BUG FIX E ───────────────────────────────────────────────
+    // Capture bookingId before state is cleared. The HTTP PUT /:id/complete
+    // route already emits 'completed' to the rider. The socket.emit('trip:ended')
+    // that was here previously would trigger index.js trip:ended handler which
+    // NOW also emits 'completed' to the rider — causing a double-fire.
+    // Removed it. HTTP is the single source of truth for ride completion.
+    const bookingId = activeRide.id;
+    const fareAmount = activeRide.fareAmount;
     try {
-      const result = await api.completeRide(activeRide.id, getDriverToken());
+      const result = await api.completeRide(bookingId, getDriverToken());
       setTripActive(false);
       setTripCount(c => c + 1);
-      setEarnings(e => e + (result.fareAmount || activeRide?.fareAmount || 120));
+      setEarnings(e => e + (result.fareAmount || fareAmount || 120));
       setActiveRide(null);
       clearActiveDriverRide();
       setUserLocation(null);
       setPassengers(0);
-      const socket = getSocket();
-      socket?.emit('trip:ended', { bookingId: activeRide.id });
+      // No socket.emit('trip:ended') — HTTP route handles rider notification.
       speak(
         lang === 'hi' ? 'यात्रा खत्म।' :
         lang === 'or' ? 'ଯାତ୍ରା ଶେଷ।' :
@@ -487,15 +558,23 @@ export default function Driver() {
 
   const cancelActiveRide = async () => {
     if (!activeRide) return;
+    // ── BUG FIX D ───────────────────────────────────────────────
+    // Capture bookingId BEFORE clearing state — the HTTP PUT /:id/cancel
+    // route emits booking:cancelled to the rider's booking room and
+    // the global fallback broadcast. We don't need to emit trip:ended
+    // via socket here — that was redundant and created a double-notify
+    // race condition where the socket event arrived before HTTP finished.
+    const bookingId = activeRide.id;
     try {
-      await api.cancelRide(activeRide.id, getDriverToken());
+      await api.cancelRide(bookingId, getDriverToken());
+      // HTTP succeeded — rider has already been notified by the backend.
+      // Now clear local driver state.
       setTripActive(false);
       setActiveRide(null);
       clearActiveDriverRide();
       setUserLocation(null);
       setPassengers(0);
-      const socket = getSocket();
-      socket?.emit('trip:ended', { bookingId: activeRide.id });
+      // No socket.emit('trip:ended') here — HTTP route handles rider notify.
       speak(
         lang === 'hi' ? 'राइड रद्द कर दी गई।' :
         lang === 'or' ? 'ରାଇଡ୍ ବାତିଲ ହେଲା।' :
