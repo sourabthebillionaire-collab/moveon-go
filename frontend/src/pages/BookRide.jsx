@@ -517,8 +517,15 @@ const storedBooking = getActiveBooking();
   };
 
   const handleBook = async () => {
-    if (!pickup || !dropoff)             { alert('Please enter pickup and drop location'); return; }
-    if (!pickupCoords || !dropoffCoords) { alert('Could not get coordinates. Try searching again.'); return; }
+    if (!pickup || !dropoff) { alert('Please enter pickup and drop location'); return; }
+    // FIX #8: Validate coords are real numeric lat/lng before submitting.
+    // Previously a null/NaN coord reached the backend, passed the truthy check
+    // (!pickupCoords), stored bad data, and fare/routing calculations broke.
+    const isValidCoord = (c) =>
+      c && typeof c.lat === 'number' && typeof c.lng === 'number' &&
+      !isNaN(c.lat) && !isNaN(c.lng);
+    if (!isValidCoord(pickupCoords))  { alert('Could not get pickup coordinates. Try searching the location again.'); return; }
+    if (!isValidCoord(dropoffCoords)) { alert('Could not get drop-off coordinates. Try searching the location again.'); return; }
     if (payment === 'Cash') await startBooking();
     else await openRazorpay();
   };
@@ -744,7 +751,12 @@ const storedBooking = getActiveBooking();
 
         <p className="section-label" style={{padding:'0 0 8px'}}>Payment Method</p>
         <div style={{display:'flex',gap:8,marginBottom:8}}>
-          {[{id:'Cash',icon:'💵'},{id:'UPI',icon:'📱'},{id:'Card',icon:'💳'}].map(m => (
+          {/* FIX #3: UPI and Card were shown as separate options but both
+              routed through Razorpay — which was never wired up, causing a
+              crash ("api.createPaymentOrder is not a function"). Now: Cash
+              for offline payment, Online for Razorpay (supports UPI + Cards
+              + Net Banking all in one checkout flow). */}
+          {[{id:'Cash',icon:'💵'},{id:'Online',icon:'📱'}].map(m => (
             <button key={m.id}
               className={`chip ${payment===m.id?'active':''}`}
               style={{flex:1,justifyContent:'center',padding:'10px',flexDirection:'column',height:52,gap:2}}
@@ -770,7 +782,7 @@ const storedBooking = getActiveBooking();
               : !dropoff          ? 'Enter Drop Location'
               : routeLoading      ? 'Calculating...'
               : payment === 'Cash'? `Book ${TYPES.find(v=>v.id===type)?.label} · ${fare?.display||'Get Fare'}`
-              :                     `Pay & Book · ${fare?.display||'Get Fare'}`
+              :                     `Pay Online · ${fare?.display||'Get Fare'}`
             }
           </button>
         </div>

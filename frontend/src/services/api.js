@@ -50,81 +50,67 @@ const del    = (path, token)       => request('DELETE', path, null, token);
 export const api = {
 
   // ── User Auth ─────────────────────────────────────────────────
-  // Phone login — no OTP, just phone number
   login: (phone, name) =>
     post('/auth/login', { phone, name }),
 
-  // Get current user profile
   getProfile: (token) =>
     get('/auth/me', token),
 
-  // Update profile
   updateProfile: (data, token) =>
     put('/auth/me', data, token),
 
   // ── Driver Auth ───────────────────────────────────────────────
-  // Validate vehicle ID exists in system
   validateVehicleId: (vehicleId) =>
     get(`/driver/validate/${vehicleId}`),
 
-  // Driver login with vehicle ID + PIN → returns { token, driver }
   driverLogin: (vehicleId, pin) =>
     post('/driver/login', { vehicleId, pin }),
 
-  // ✅ Verify driver session is still valid (used on app mount)
-  // Returns 401 if driver was deleted by admin
   getDriverProfile: (token) =>
     get('/driver/me', token),
 
-  // Register new driver (admin approves)
   driverRegister: (data) =>
     post('/driver/register', data),
 
-  // Update driver location (REST fallback, socket is primary)
   updateDriverLocation: (data, token) =>
     post('/driver/location', data, token),
 
-  // Driver go on/off duty
   setDriverDuty: (onDuty, token) =>
     post('/driver/duty', { onDuty }, token),
 
-  // Accept / decline a ride request
   respondToRide: (rideId, action, token) =>
     post(`/bookings/${rideId}/respond`, { action }, token),
 
   // ── Vehicles / Buses ──────────────────────────────────────────
-  // Get all active vehicles near a location
   getNearbyVehicles: (lat, lng, type = 'all') =>
     get(`/vehicles/nearby?lat=${lat}&lng=${lng}&type=${type}`),
 
-  // Get live buses on a route
   getBusRoute: (routeId) =>
     get(`/buses/route/${routeId}`),
 
-  // Get all bus routes
   getBusRoutes: () =>
     get('/buses/routes'),
 
-  // Get single vehicle by ID
   getVehicle: (vehicleId) =>
     get(`/vehicles/${vehicleId}`),
 
   // ── Bookings ──────────────────────────────────────────────────
-  // Create a new ride booking
   createBooking: (data, token) =>
     post('/bookings', data, token),
 
-  // Get user's booking history
   getBookings: (token) =>
     get('/bookings', token),
 
-  // Cancel a booking
   cancelBooking: (bookingId, token) =>
     del(`/bookings/${bookingId}`, token),
 
-  // Get active booking (if any)
   getActiveBooking: (token) =>
     get('/bookings/active', token),
+
+  // FIX: Verify driver's stored ride is still live in DB.
+  // Prevents "Failed to start the ride" from stale localStorage rides.
+  getDriverActiveBooking: (token) =>
+    get('/bookings/driver-active', token),
 
   // Driver ride lifecycle
   startRide: (bookingId, token) =>
@@ -134,41 +120,38 @@ export const api = {
   cancelRide: (bookingId, token) =>
     put(`/bookings/${bookingId}/cancel`, null, token),
 
+  // ── Payments ──────────────────────────────────────────────────
+  // FIX: Was called in BookRide.jsx but never defined here.
+  // Any non-cash payment crashed with "api.createPaymentOrder is not a function".
+  createPaymentOrder: (data, token) =>
+    post('/payments/create-order', data, token),
+
   // ── Fare ──────────────────────────────────────────────────────
-  // Get fare estimate
   getFareEstimate: (from, to, vehicleType) =>
     post('/fare/estimate', { from, to, vehicleType }),
 
   // ── Admin ─────────────────────────────────────────────────────
-  // Admin login
   adminLogin: (password) =>
     post('/admin/login', { password }),
 
-  // Get dashboard stats
   getAdminStats: (token) =>
     get('/admin/stats', token),
 
-  // Get all drivers
   getAdminDrivers: (status = 'all', token) =>
     get(`/admin/drivers?status=${status}`, token),
 
-  // Approve driver
   approveDriver: (driverId, token) =>
     put(`/admin/drivers/${driverId}/approve`, {}, token),
 
-  // Reject driver
   rejectDriver: (driverId, reason, token) =>
     put(`/admin/drivers/${driverId}/reject`, { reason }, token),
 
-  // Delete driver
   deleteDriver: (driverId, token) =>
     del(`/admin/drivers/${driverId}`, token),
 
-  // Get all users
   getAdminUsers: (token) =>
     get('/admin/users', token),
 
-  // Get all bookings
   getAdminBookings: (token) =>
     get('/admin/bookings', token),
 

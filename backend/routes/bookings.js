@@ -10,11 +10,25 @@ router.post('/', protect, bookingLimiter, asyncHandler(async (req, res) => {
   const {
     type, pickup, pickupCoords, dropoff, dropoffCoords,
     fare, fareAmount, payment, distance, duration,
+    // FIX: Accept and persist Razorpay payment fields.
+    // BookRide.jsx sends these after checkout — previously discarded silently.
+    razorpayOrderId, razorpayPaymentId, razorpaySignature, paid,
   } = req.body;
 
   if (!type || !pickup || !dropoff || !pickupCoords || !dropoffCoords || !payment) {
     logger.warn('Booking creation: missing required fields', { userId: req.user._id });
     return res.status(400).json({ message: 'Missing required booking fields.' });
+  }
+
+  // FIX: Validate that coords are real numeric lat/lng before storing.
+  // Previously NaN/null coords silently stored as bad data.
+  const isValidCoord = (c) =>
+    c && typeof c.lat === 'number' && typeof c.lng === 'number' &&
+    !isNaN(c.lat) && !isNaN(c.lng);
+
+  if (!isValidCoord(pickupCoords) || !isValidCoord(dropoffCoords)) {
+    logger.warn('Booking creation: invalid coordinates', { userId: req.user._id });
+    return res.status(400).json({ message: 'Invalid pickup or drop-off coordinates.' });
   }
 
   const amount = fareAmount || 50;
@@ -23,27 +37,33 @@ router.post('/', protect, bookingLimiter, asyncHandler(async (req, res) => {
     userId:      req.user._id,
     vehicleType: type,
     pickup,      dropoff,
-    pickupLat:   pickupCoords?.lat,
-    pickupLng:   pickupCoords?.lng,
-    dropoffLat:  dropoffCoords?.lat,
-    dropoffLng:  dropoffCoords?.lng,
-    fare, fareAmount: amount, payment, distance, duration,
+    pickupLat:   pickupCoords.lat,
+    pickupLng:   pickupCoords.lng,
+    dropoffLat:  dropoffCoords.lat,
+    dropoffLng:  dropoffCoords.lng,
+    fare, fareAmount: amount,
+    payment: payment || 'Cash',
+    distance, duration,
     status: 'searching',
+    // Payment tracking
+    paid:              !!paid,
+    razorpayOrderId:   razorpayOrderId   || null,
+    razorpayPaymentId: razorpayPaymentId || null,
+    razorpaySignature: razorpaySignature || null,
   });
 
   logger.info(`Booking created: ${booking._id}`, { userId: req.user._id, type, fareAmount: amount });
 
-  // Broadcast ride request to all connected drivers
   if (global.io) {
     global.io.emit('ride:request', {
       id:         booking._id,
       type,       pickup,      dropoff,
       fare,       fareAmount:  amount,
       distance,   duration,
-      pickupLat:  pickupCoords?.lat,
-      pickupLng:  pickupCoords?.lng,
-      dropoffLat: dropoffCoords?.lat,
-      dropoffLng: dropoffCoords?.lng,
+      pickupLat:  pickupCoords.lat,
+      pickupLng:  pickupCoords.lng,
+      dropoffLat: dropoffCoords.lat,
+      dropoffLng: dropoffCoords.lng,
     });
   }
 
@@ -55,7 +75,7 @@ router.post('/', protect, bookingLimiter, asyncHandler(async (req, res) => {
 
 // POST /api/bookings/:id/respond — driver accepts or declines
 router.post('/:id/respond', protectDriver, asyncHandler(async (req, res) => {
-  const { action } = req.body; // 'accept' or 'decline'
+  const { action } = req.body;
   const bookingId  = req.params.id;
 
   if (!['accept', 'decline'].includes(action)) {
@@ -89,31 +109,24 @@ router.post('/:id/respond', protectDriver, asyncHandler(async (req, res) => {
       if (global.io.activeBookings) {
         global.io.activeBookings.set(String(bookingId), String(req.driver._id));
       }
-
       const eventPayload = { action: 'accept', driver: driverPayload };
-
-      // Emit to booking room (targeted) + fallback broadcast
       global.io.to(`booking:${bookingId}`).emit(`booking:${bookingId}`, eventPayload);
       global.io.emit(`booking:${bookingId}`, eventPayload);
     }
 
-    res.json({
-      message: 'Booking accepted successfully.',
-      driver: driverPayload,
-    });
+    res.json({ message: 'Booking accepted successfully.', driver: driverPayload });
 
   } else {
     logger.info(`Booking declined: ${bookingId}`, { driverId: req.driver._id });
-
     if (global.io) {
       global.io.to(`booking:${bookingId}`).emit(`booking:${bookingId}`, { action: 'decline' });
+      global.io.emit(`booking:${bookingId}`, { action: 'decline' });
     }
-
     res.json({ message: 'Booking declined.' });
   }
 }));
 
-// PUT /api/bookings/:id/start — driver starts the ride after pickup
+// PUT /api/bookings/:id/start — driver starts ride after pickup
 router.put('/:id/start', protectDriver, asyncHandler(async (req, res) => {
   const booking = await Booking.findOneAndUpdate(
     { _id: req.params.id, driverId: req.driver._id, status: 'accepted' },
@@ -122,24 +135,33 @@ router.put('/:id/start', protectDriver, asyncHandler(async (req, res) => {
   );
 
   if (!booking) {
-    return res.status(404).json({ message: 'Ride cannot be started. It may have been cancelled or already started.' });
+    // FIX: Return specific error codes so Driver.jsx can handle each case.
+    // Previously all failures returned 404 "cannot be started" — driver had
+    // no way to distinguish "stale ride" from "already started" from "wrong driver".
+    const exists = await Booking.findById(req.params.id).select('status driverId').lean();
+    if (!exists) {
+      return res.status(404).json({ message: 'Booking not found.', code: 'NOT_FOUND' });
+    }
+    if (String(exists.driverId) !== String(req.driver._id)) {
+      return res.status(403).json({ message: 'This ride is not assigned to you.', code: 'WRONG_DRIVER' });
+    }
+    return res.status(409).json({
+      message: `Ride cannot be started. Current status: ${exists.status}`,
+      code: 'WRONG_STATUS',
+      status: exists.status,
+    });
   }
 
   if (global.io) {
     const driverPayload = {
-      name:          req.driver.name,
-      phone:         req.driver.phone,
-      vehicleNumber: req.driver.vehicleNumber,
-      vehicleType:   req.driver.vehicleType,
-      rating:        req.driver.rating || 4.5,
-      eta:           '3–5 min',
-      driverId:      String(req.driver._id),
+      name: req.driver.name, phone: req.driver.phone,
+      vehicleNumber: req.driver.vehicleNumber, vehicleType: req.driver.vehicleType,
+      rating: req.driver.rating || 4.5, eta: '3–5 min',
+      driverId: String(req.driver._id),
     };
     const payload = {
-      action:    'started',
-      bookingId: String(req.params.id),
-      driverId:  String(req.driver._id),
-      driver:    driverPayload,
+      action: 'started', bookingId: String(req.params.id),
+      driverId: String(req.driver._id), driver: driverPayload,
     };
     logger.info(`Emitting started for booking ${req.params.id}`, { driverId: req.driver._id });
     global.io.to(`booking:${req.params.id}`).emit(`booking:${req.params.id}`, payload);
@@ -165,22 +187,17 @@ router.put('/:id/complete', protectDriver, asyncHandler(async (req, res) => {
 
   if (global.io) {
     const driverPayload = {
-      name:          req.driver.name,
-      phone:         req.driver.phone,
-      vehicleNumber: req.driver.vehicleNumber,
-      vehicleType:   req.driver.vehicleType,
-      rating:        req.driver.rating || 4.5,
-      eta:           '3–5 min',
-      driverId:      String(req.driver._id),
+      name: req.driver.name, phone: req.driver.phone,
+      vehicleNumber: req.driver.vehicleNumber, vehicleType: req.driver.vehicleType,
+      rating: req.driver.rating || 4.5, eta: '3–5 min',
+      driverId: String(req.driver._id),
     };
     const payload = {
-      action:     'completed',
-      bookingId:  String(req.params.id),
-      driverId:   String(req.driver._id),
-      driver:     driverPayload,
+      action: 'completed', bookingId: String(req.params.id),
+      driverId: String(req.driver._id), driver: driverPayload,
       fareAmount: booking.fareAmount,
     };
-    logger.info(`Emitting completed for booking ${req.params.id}`, { driverId: req.driver._id, fareAmount: booking.fareAmount });
+    logger.info(`Emitting completed for booking ${req.params.id}`, { driverId: req.driver._id });
     global.io.to(`booking:${req.params.id}`).emit(`booking:${req.params.id}`, payload);
     global.io.emit(`booking:${req.params.id}`, payload);
     global.io.activeBookings?.delete(String(req.params.id));
@@ -189,7 +206,7 @@ router.put('/:id/complete', protectDriver, asyncHandler(async (req, res) => {
   res.json({ message: 'Ride completed.', fareAmount: booking.fareAmount });
 }));
 
-// PUT /api/bookings/:id/cancel — driver cancels an accepted or started ride
+// PUT /api/bookings/:id/cancel — driver cancels
 router.put('/:id/cancel', protectDriver, asyncHandler(async (req, res) => {
   const booking = await Booking.findOneAndUpdate(
     { _id: req.params.id, driverId: req.driver._id, status: { $in: ['accepted', 'started'] } },
@@ -202,11 +219,7 @@ router.put('/:id/cancel', protectDriver, asyncHandler(async (req, res) => {
   }
 
   if (global.io) {
-    const payload = {
-      action:    'cancelled',
-      bookingId: String(req.params.id),
-      driverId:  String(req.driver._id),
-    };
+    const payload = { action: 'cancelled', bookingId: String(req.params.id), driverId: String(req.driver._id) };
     logger.info(`Emitting cancelled for booking ${req.params.id}`, { driverId: req.driver._id });
     global.io.to(`booking:${req.params.id}`).emit(`booking:${req.params.id}`, payload);
     global.io.emit(`booking:${req.params.id}`, payload);
@@ -226,7 +239,7 @@ router.get('/', protect, asyncHandler(async (req, res) => {
   res.json({ bookings });
 }));
 
-// GET /api/bookings/active — get rider's active booking
+// GET /api/bookings/active — rider's active booking
 router.get('/active', protect, asyncHandler(async (req, res) => {
   const booking = await Booking.findOne({
     userId: req.user._id,
@@ -234,6 +247,19 @@ router.get('/active', protect, asyncHandler(async (req, res) => {
   }).populate('driverId', 'name phone vehicleNumber rating vehicleType');
 
   logger.info(`Active booking query`, { userId: req.user._id, found: !!booking });
+  res.json({ booking: booking || null });
+}));
+
+// GET /api/bookings/driver-active — driver's currently assigned booking
+// FIX: Used by Driver.jsx session restore to verify localStorage ride is
+// still valid. Without this, stale rides cause "Failed to start the ride".
+router.get('/driver-active', protectDriver, asyncHandler(async (req, res) => {
+  const booking = await Booking.findOne({
+    driverId: req.driver._id,
+    status:   { $in: ['accepted', 'started'] },
+  }).select('_id status pickup dropoff fare fareAmount distance duration pickupLat pickupLng dropoffLat dropoffLng vehicleType payment').lean();
+
+  logger.info(`Driver active booking query`, { driverId: req.driver._id, found: !!booking });
   res.json({ booking: booking || null });
 }));
 
@@ -254,30 +280,15 @@ router.delete('/:id', protect, asyncHandler(async (req, res) => {
     if (global.io.activeBookings) {
       global.io.activeBookings.delete(String(req.params.id));
     }
-
-    // Notify the rider's own booking room
     global.io.to(`booking:${req.params.id}`).emit(`booking:${req.params.id}`, { action: 'cancelled' });
     global.io.emit(`booking:${req.params.id}`, { action: 'cancelled' });
 
-    // ── BUG FIX #4 ─────────────────────────────────────────────
-    // Previously: when booking.status was 'searching', booking.driverId
-    // is null, so the driver:${driverId} emit was skipped entirely.
-    // The driver would never know the rider cancelled during the search
-    // phase and would keep seeing the ride request card indefinitely.
-    //
-    // Fix: always broadcast 'ride:cancelled' to ALL drivers when the
-    // booking is in 'searching' state (no specific driver assigned yet).
-    // When a specific driver is assigned, we still target their room.
     if (booking.driverId) {
-      // Accepted ride — notify the specific assigned driver
       global.io.to(`driver:${String(booking.driverId)}`).emit('booking:cancelled', {
-        bookingId: String(booking._id),
-        action:    'cancelled',
+        bookingId: String(booking._id), action: 'cancelled',
       });
       logger.info(`Rider cancelled — notified assigned driver ${booking.driverId}`, { bookingId: booking._id });
     } else {
-      // Searching state — broadcast to all drivers so any driver who
-      // received this ride:request knows it's been withdrawn
       global.io.emit('ride:cancelled', {
         bookingId: String(booking._id),
         id:        String(booking._id),

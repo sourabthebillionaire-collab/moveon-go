@@ -210,7 +210,20 @@ export default function Driver() {
     (async () => {
       try {
         const socket = connectSocket();
-        socket.emit('driver:register', { driverId: saved.id || saved._id });
+        const driverId = saved.id || saved._id;
+
+        if (socket.connected) {
+          socket.emit('driver:register', { driverId });
+        }
+
+        // FIX #11: Re-register on every reconnect so driver stays in their
+        // personal room through socket disconnects. Previously registered once
+        // on mount — after any reconnect the driver missed kicked/offline events.
+        const handleReconnect = () => {
+          socket.emit('driver:register', { driverId });
+          console.log('[Driver] Re-registered after reconnect');
+        };
+        socket.on('connect', handleReconnect);
 
         socket.on('driver:kicked', ({ reason }) => {
           unwatchRef.current?.();
@@ -225,12 +238,40 @@ export default function Driver() {
 
         await api.getDriverProfile(token);
 
+        // FIX: Verify stored ride is still live in DB before restoring it.
+        // Root cause of "Failed to start the ride": localStorage had an old
+        // accepted booking that was cancelled while driver was offline.
+        // startRide() would call PUT /start → 404 → alert. Now we check first.
         const storedRide = getActiveDriverRide();
         if (storedRide) {
-          setActiveRide(storedRide);
-          setOnDuty(true);
-          setTripActive(storedRide.status === 'started');
-          setPassengers(storedRide.status === 'started' ? 1 : 0);
+          try {
+            const { booking: liveBooking } = await api.getDriverActiveBooking(token);
+            if (liveBooking && ['accepted', 'started'].includes(liveBooking.status)) {
+              const verifiedRide = {
+                id:         liveBooking._id,
+                status:     liveBooking.status,
+                pickup:     liveBooking.pickup,
+                dropoff:    liveBooking.dropoff,
+                fare:       liveBooking.fare,
+                fareAmount: liveBooking.fareAmount,
+                distance:   liveBooking.distance,
+                duration:   liveBooking.duration,
+                type:       liveBooking.vehicleType,
+              };
+              setActiveRide(verifiedRide);
+              setActiveDriverRide(verifiedRide);
+              setOnDuty(true);
+              setTripActive(liveBooking.status === 'started');
+              setPassengers(liveBooking.status === 'started' ? 1 : 0);
+            } else {
+              clearActiveDriverRide(); // stale — gone from DB
+            }
+          } catch {
+            // Network failure — keep stored ride optimistically but don't set tripActive
+            setActiveRide(storedRide);
+            setTripActive(false);
+            setOnDuty(true);
+          }
         }
 
         setStep('panel');
@@ -248,6 +289,7 @@ export default function Driver() {
     return () => {
       const socket = getSocket();
       socket?.off('driver:kicked');
+      socket?.off('connect');
     };
   }, []);
 
@@ -274,7 +316,15 @@ export default function Driver() {
       setDriver(d);
 
       const socket = connectSocket();
-      socket.emit('driver:register', { driverId: d.id || d._id });
+      const driverId = d.id || d._id;
+
+      if (socket.connected) {
+        socket.emit('driver:register', { driverId });
+      }
+
+      // FIX #11 (login path): Re-register on every reconnect
+      const handleReconnect = () => socket.emit('driver:register', { driverId });
+      socket.on('connect', handleReconnect);
 
       socket.on('driver:kicked', ({ reason }) => {
         unwatchRef.current?.();
@@ -297,12 +347,31 @@ export default function Driver() {
 
   // ── Panel: start duty ───────────────────────────────────────
   const startDuty = async () => {
+    // FIX #13: Call API first — only set state on success.
+    // Previously setOnDuty(true) fired immediately, so if the API call
+    // failed the UI showed ON DUTY while backend still had driver offline.
+    try {
+      await api.setDriverDuty(true, getDriverToken());
+    } catch {
+      alert('Failed to start duty. Please check your connection and try again.');
+      return;
+    }
     setOnDuty(true);
     speak(t.gpsActive, lang);
-    try { await api.setDriverDuty(true, getDriverToken()); } catch {}
+
+    // FIX: Reconnect socket + re-register.
+    // endDuty() calls disconnectSocket(). If driver toggles off then on,
+    // the socket was disconnected so emitLocation and ride requests stopped.
+    const socket = connectSocket();
+    const driverId = driver?.id || driver?._id;
+    if (socket.connected) {
+      socket.emit('driver:register', { driverId });
+    } else {
+      socket.once('connect', () => socket.emit('driver:register', { driverId }));
+    }
 
     const basePayload = {
-      driverId:      driver?.id || driver?._id,
+      driverId,
       vehicleId:     driver?.vehicleId,
       type:          driver?.vehicleType,
       vehicleNumber: driver?.vehicleNumber,
@@ -520,7 +589,24 @@ export default function Driver() {
       );
     } catch (err) {
       console.error('[Driver] Failed to start ride:', err);
-      alert('Failed to start the ride. Please try again.');
+      // FIX #14: Handle stale ride (404/409) by clearing local state.
+      // "Failed to start the ride" was caused by a stale localStorage ride
+      // that no longer exists in DB. Now we clear it and show a clear message
+      // so driver can receive new rides instead of being stuck.
+      if (err.status === 404 || err.status === 409 || err.status === 403) {
+        clearActiveDriverRide();
+        setActiveRide(null);
+        setTripActive(false);
+        setUserLocation(null);
+        setPassengers(0);
+        const msg =
+          err.status === 403 ? 'This ride is not assigned to you.' :
+          err.status === 409 ? 'This ride has already been started or cancelled.' :
+          'This ride is no longer available — the passenger may have cancelled.';
+        alert(msg);
+      } else {
+        alert('Failed to start the ride. Please check your connection and try again.');
+      }
     }
   };
 

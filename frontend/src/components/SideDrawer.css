@@ -3,8 +3,8 @@
 .drawer {
   position: fixed;
   top: 0; left: 0;
-  width: 76vw;          /* ✅ 76% of screen — not full width on mobile */
-  max-width: 300px;     /* ✅ cap on larger screens */
+  width: 76vw;          /* 76% of screen — not full width on mobile */
+  max-width: 300px;     /* cap on larger screens */
   height: 100dvh;
   background: var(--white);
   z-index: 300;
@@ -138,4 +138,12 @@
   color: #9CA3AF;
   text-align: center;
   margin: 0;
+}
+
+/* Overlay — rendered by SideDrawer.jsx behind the open drawer */
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 299;
 }

@@ -4,8 +4,11 @@
  */
 import { io } from 'socket.io-client';
 
+// ── BUG #1 FIX: Trim env var to remove accidental whitespace ───
+// If VITE_SOCKET_URL has a trailing space or newline in .env, the
+// WebSocket tries to connect to the wrong URL and fails silently.
 const SOCKET_URL = (() => {
-  const envUrl = import.meta.env.VITE_SOCKET_URL;
+  const envUrl = import.meta.env.VITE_SOCKET_URL?.trim();
   if (envUrl) return envUrl;
   if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
     return 'http://localhost:3001';
@@ -21,12 +24,12 @@ export function getSocket() {
   if (!_socket) {
     _socket = io(SOCKET_URL, {
       transports: ['websocket', 'polling'],
-      reconnectionAttempts: 5,
+      reconnectionAttempts: 10,
       reconnectionDelay: 2000,
       timeout: 8000,
       autoConnect: false,
     });
-    _socket.on('connect',       () => console.log('[Socket] Connected'));
+    _socket.on('connect',       () => console.log('[Socket] Connected:', _socket.id));
     _socket.on('disconnect',    (r) => console.log('[Socket] Disconnected:', r));
     _socket.on('connect_error', ()  => { /* silent */ });
   }
@@ -50,32 +53,62 @@ export function emitLocation(payload) {
 }
 
 // ── Driver: listen for ride requests ─────────────────────────
+// BUG FIX: Previously attached listener without checking connection.
+// If socket wasn't connected yet, the first ride:request after connect
+// was missed. Now: defer attach until connected, and re-attach on
+// every reconnect so the driver never misses requests.
 export function onRideRequest(cb) {
   const s = getSocket();
-  s.on('ride:request', cb);
-  return () => s.off('ride:request', cb);
+
+  const attach = () => {
+    s.off('ride:request', cb); // prevent duplicate listener on reconnect
+    s.on('ride:request', cb);
+  };
+
+  if (s.connected) {
+    attach();
+  } else {
+    s.once('connect', attach);
+  }
+
+  // Re-attach on every future reconnect
+  s.on('connect', attach);
+
+  return () => {
+    s.off('ride:request', cb);
+    s.off('connect', attach);
+  };
 }
 
 // ── Driver: respond to ride ───────────────────────────────────
-// NOTE: kept for backwards compat but Driver.jsx no longer calls this.
-// The HTTP route handles the socket emit with full driver details.
+// HTTP route handles the socket emit — this is kept for compat only.
 export function emitRideResponse(rideId, action) {
   const s = getSocket();
   if (s.connected) s.emit('ride:respond', { rideId, action });
 }
 
 // ── Rider: join booking room ──────────────────────────────────
-// ✅ FIXED — was emitting 'join' which backend doesn't handle.
-// Backend expects 'rider:joinBooking' to add socket to booking:{id} room.
+// BUG FIX: Previously joined once and stopped. If the socket dropped
+// and reconnected, the rider left the booking:${id} room and missed
+// all targeted events. Now re-joins on every reconnect.
+// Returns a cleanup function to stop auto-rejoining when booking ends.
 export function joinBookingRoom(bookingId) {
   const s = getSocket();
-  const doJoin = () => s.emit('rider:joinBooking', { bookingId });
+
+  const doJoin = () => {
+    s.emit('rider:joinBooking', { bookingId });
+    console.log('[Socket] Joining booking room:', bookingId);
+  };
+
   if (s.connected) {
     doJoin();
   } else {
-    // If not connected yet, join as soon as we are
     s.once('connect', doJoin);
   }
+
+  s.on('connect', doJoin);
+
+  return () => s.off('connect', doJoin);
 }
 
 // ── Rider: send current location while waiting for pickup ─────
@@ -85,9 +118,8 @@ export function emitRiderLocation(payload) {
 }
 
 // ── Rider: listen for booking status updates ──────────────────
-// ✅ FIXED — was listening to 'booking:update' (wrong event name).
 // Backend emits 'booking:{bookingId}' as a dynamic per-booking event.
-// Callback receives: { action: 'accept'|'decline'|'cancelled', driver?: {...} }
+// Callback: { action: 'accept'|'decline'|'started'|'completed'|'cancelled'|'driver_offline', driver?: {...} }
 export function onBookingResponse(bookingId, cb) {
   const s = getSocket();
   const eventName = `booking:${bookingId}`;
@@ -100,7 +132,6 @@ export function onBookingResponse(bookingId, cb) {
 }
 
 // ── Rider: live location of accepted driver ───────────────────
-// After accept, backend pushes 'driver:locationUpdate' to the booking room
 export function onDriverLocationUpdate(cb) {
   const s = getSocket();
   s.on('driver:locationUpdate', cb);
