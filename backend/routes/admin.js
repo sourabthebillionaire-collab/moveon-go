@@ -64,7 +64,7 @@ router.get('/stats', adminAuth, asyncHandler(async (req, res) => {
       Driver.countDocuments({ onDuty: true, isActive: true }),
       Booking.countDocuments(),
       Booking.countDocuments({ status: 'completed' }),
-      Booking.countDocuments({ createdAt: { $gte: new Date(new Date().setHours(0,0,0,0)) } }),
+      Booking.countDocuments({ createdAt: { $gte: new Date(new Date().setUTCHours(0,0,0,0)) } }),
     ]);
 
     res.json({

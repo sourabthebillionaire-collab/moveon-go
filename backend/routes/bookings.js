@@ -143,6 +143,9 @@ router.post('/:id/respond', protectDriver, asyncHandler(async (req, res) => {
       if (global.io.activeBookings) {
         global.io.activeBookings.set(String(bookingId), String(req.driver._id));
       }
+      if (global.io.driverToBooking) {
+        global.io.driverToBooking.set(String(req.driver._id), String(bookingId));
+      }
       // BUG FIX #3: rider needs OTP immediately on accept
       const eventPayload = { 
         action: 'accept', 

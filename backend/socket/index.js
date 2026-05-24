@@ -10,13 +10,15 @@ function getDist(lat1, lon1, lat2, lon2) {
 }
 
 module.exports = function initSocket(io) {
-  const connectedDrivers       = new Map(); // socketId  → driverId
-  const activeVehiclePositions = new Map(); // driverId  → latest position
-  const activeBookings         = new Map(); // bookingId → driverId
-  const driverToBooking        = new Map(); // driverId  → bookingId (Performance Optimization)
+  // ✅ SHARED MAPS: Use existing maps from io object to ensure REST routes and Sockets sync perfectly
+  const connectedDrivers       = new Map(); 
+  const activeVehiclePositions = io.activeVehiclePositions || new Map();
+  const activeBookings         = io.activeBookings         || new Map();
+  const driverToBooking        = io.driverToBooking        || new Map();
+
   io.activeVehiclePositions = activeVehiclePositions;
-  io.driverToBooking = driverToBooking;
-  io.activeBookings = activeBookings;
+  io.driverToBooking        = driverToBooking;
+  io.activeBookings         = activeBookings;
 
   io.on('connection', (socket) => {
     console.log(`[Socket] Connected: ${socket.id}`);
