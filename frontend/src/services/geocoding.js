@@ -52,11 +52,17 @@ export function getCurrentPosition() {
   });
 }
 
-export function watchPosition(cb) {
-  if (!navigator.geolocation) return () => {};
+export function watchPosition(cb, errCb) {
+  if (!navigator.geolocation) {
+    if (errCb) errCb(new Error('GPS not supported'));
+    return () => {};
+  }
   const id = navigator.geolocation.watchPosition(
     p => cb({ lat: p.coords.latitude, lng: p.coords.longitude, speed: p.coords.speed || 0, bearing: p.coords.heading || 0 }),
-    e => console.warn('GPS error:', e.message),
+    e => {
+      console.warn('GPS error:', e.message);
+      if (errCb) errCb(e);
+    },
     { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 }
   );
   return () => navigator.geolocation.clearWatch(id);

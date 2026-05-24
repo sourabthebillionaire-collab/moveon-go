@@ -223,6 +223,10 @@
   font-size: 12px; font-weight: 500; color: var(--green-700);
 }
 .drv-gps-coords { font-size: 10px; color: var(--green-700); opacity: 0.7; margin-left: auto; font-family: monospace; }
+.drv-gps-bar--error {
+  background: var(--danger-bg, #FEE2E2);
+  color: var(--danger, #DC2626);
+}
 
 /* Main duty button */
 .drv-main-action { padding: 18px 16px; }

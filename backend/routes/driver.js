@@ -30,7 +30,7 @@ async function generateVehicleId(vehicleType, vehicleNumber) {
 
 // POST /api/driver/register
 router.post('/register', asyncHandler(async (req, res) => {
-  const { name, phone, email, vehicleType, vehicleNumber, pin, address, licenseNumber } = req.body;
+  const { name, phone, email, vehicleType, vehicleNumber, pin, address, licenseNumber, busName, routeFrom, routeTo, routeNumber } = req.body;
 
   // Validate required fields
   if (!name || !phone || !vehicleType || !vehicleNumber || !pin) {
@@ -72,6 +72,10 @@ router.post('/register', asyncHandler(async (req, res) => {
     pinHash,
     address:       address?.trim() || '',
     licenseNumber: licenseNumber?.trim() || '',
+    busName:       vehicleType === 'bus' ? (busName?.trim() || '') : '',
+    routeFrom:     vehicleType === 'bus' ? (routeFrom?.trim() || '') : '',
+    routeTo:       vehicleType === 'bus' ? (routeTo?.trim() || '') : '',
+    routeNumber:   vehicleType === 'bus' ? (routeNumber?.trim() || '') : '',
     isApproved:    false,
     isActive:      true,
     status:        'offline',
@@ -90,13 +94,17 @@ router.post('/register', asyncHandler(async (req, res) => {
 router.get('/validate/:vehicleId', asyncHandler(async (req, res) => {
   const driver = await Driver.findOne({
     vehicleId:  req.params.vehicleId.toUpperCase(),
-    isApproved: true,
     isActive:   true,
-  }).select('vehicleId vehicleType vehicleNumber name');
+  }).select('vehicleId vehicleType vehicleNumber name isApproved');
 
   if (!driver) {
     logger.warn(`Vehicle validation failed: ${req.params.vehicleId}`);
-    return res.status(404).json({ message: 'Vehicle ID not found or not yet approved. Contact admin.' });
+    return res.status(404).json({ message: 'Vehicle ID not found. Contact admin.' });
+  }
+
+  if (!driver.isApproved) {
+    logger.warn(`Vehicle validation: pending approval: ${req.params.vehicleId}`);
+    return res.status(403).json({ message: 'Your registration is pending admin approval. Please wait.' });
   }
 
   logger.info(`Vehicle validated: ${driver.vehicleId}`);
@@ -141,6 +149,10 @@ router.post('/login', authLimiter, asyncHandler(async (req, res) => {
       vehicleNumber: driver.vehicleNumber,
       rating:        driver.rating,
       totalTrips:    driver.totalTrips,
+      busName:       driver.busName,
+      routeFrom:     driver.routeFrom,
+      routeTo:       driver.routeTo,
+      routeNumber:   driver.routeNumber,
     },
   });
 }));

@@ -195,6 +195,7 @@ export default function Driver() {
   const [userLocation, setUserLocation] = useState(null);
   const [issueSheet, setIssueSheet]= useState(false);
   const [socketDebug, setSocketDebug] = useState([]);
+  const [gpsError,   setGpsError]  = useState(false);
   const unwatchRef   = useRef(null);
   const pingRef      = useRef(null);
   const gpsPosRef    = useRef(null); // keep GPS pos accessible in interval closure
@@ -236,7 +237,11 @@ export default function Driver() {
           setKickedMsg(reason || 'Your account has been removed by admin.');
         });
 
-        await api.getDriverProfile(token);
+        const profile = await api.getDriverProfile(token);
+        if (profile?.driver) {
+          setDriver(profile.driver);
+          setDriverSession(profile.driver, token);
+        }
 
         // FIX: Verify stored ride is still live in DB before restoring it.
         // Root cause of "Failed to start the ride": localStorage had an old
@@ -302,7 +307,7 @@ export default function Driver() {
       setStep('pin');
       setTimeout(() => pinInputRef.current?.focus(), 200);
     } catch (err) {
-      setError(err.status === 404 ? t.errInvalidId : t.errServer);
+      setError(err.status === 404 ? t.errInvalidId : err.status === 403 ? (err.data?.message || err.message || 'Your registration is pending admin approval.') : t.errServer);
     } finally { setBusy(false); }
   };
 
@@ -383,6 +388,7 @@ export default function Driver() {
 
     unwatchRef.current = watchPosition(pos => {
       setGpsPos(pos);
+      setGpsError(false);
       gpsPosRef.current = pos;
       setSpeed(Math.round((pos.speed || 0) * 3.6));
       emitLocation({
@@ -390,8 +396,10 @@ export default function Driver() {
         lat: pos.lat, lng: pos.lng,
         bearing: pos.bearing || 0,
         speed: Math.round((pos.speed || 0) * 3.6),
-        status: 'active',
+        status: activeRide ? 'busy' : 'active',
       });
+    }, () => {
+      setGpsError(true);
     });
 
     pingRef.current = setInterval(() => {
@@ -399,7 +407,7 @@ export default function Driver() {
       if (pos) emitLocation({
         ...basePayload,
         lat: pos.lat, lng: pos.lng,
-        status: 'active',
+        status: activeRide ? 'busy' : 'active',
       });
     }, 10000);
   };
@@ -425,6 +433,8 @@ export default function Driver() {
   useEffect(() => {
     if (!onDuty) return;
     const unsub = onRideRequest(req => {
+      // Suppress new ride requests if driver already has an active ride
+      if (activeRide) return;
       setRideReq(req);
       speak(
         lang === 'hi' ? 'नई बुकिंग आई है।' :
@@ -434,7 +444,7 @@ export default function Driver() {
       );
     });
     return unsub;
-  }, [onDuty, lang]);
+  }, [onDuty, lang, activeRide]);
 
   useEffect(() => {
     const socket = getSocket();
@@ -882,10 +892,10 @@ export default function Driver() {
         )}
 
         {onDuty && (
-          <div className="drv-gps-bar">
-            <span className="live-dot" style={{width:7,height:7}}/>
-            <span>{t.gpsActive}</span>
-            {gpsPos && <span className="drv-gps-coords">{gpsPos.lat.toFixed(4)}, {gpsPos.lng.toFixed(4)}</span>}
+          <div className={`drv-gps-bar ${gpsError ? 'drv-gps-bar--error' : ''}`}>
+            <span className="live-dot" style={{width:7,height:7, background: gpsError ? 'var(--danger)' : undefined}}/>
+            <span>{gpsError ? 'GPS Error — check location permissions' : t.gpsActive}</span>
+            {!gpsError && gpsPos && <span className="drv-gps-coords">{gpsPos.lat.toFixed(4)}, {gpsPos.lng.toFixed(4)}</span>}
           </div>
         )}
 

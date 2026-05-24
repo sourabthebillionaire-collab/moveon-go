@@ -95,6 +95,9 @@ router.post('/:id/respond', protectDriver, asyncHandler(async (req, res) => {
 
     logger.info(`Booking accepted: ${bookingId}`, { driverId: req.driver._id });
 
+    // Set driver status to 'busy' so they stop receiving new ride requests
+    await Driver.updateOne({ _id: req.driver._id }, { status: 'busy' });
+
     const driverPayload = {
       name:          req.driver.name,
       phone:         req.driver.phone,
@@ -183,7 +186,7 @@ router.put('/:id/complete', protectDriver, asyncHandler(async (req, res) => {
     return res.status(404).json({ message: 'Ride cannot be completed. It may not be started yet.' });
   }
 
-  await Driver.updateOne({ _id: req.driver._id }, { $inc: { totalTrips: 1 } });
+  await Driver.updateOne({ _id: req.driver._id }, { $inc: { totalTrips: 1 }, status: 'active' });
 
   if (global.io) {
     const driverPayload = {
@@ -217,6 +220,9 @@ router.put('/:id/cancel', protectDriver, asyncHandler(async (req, res) => {
   if (!booking) {
     return res.status(404).json({ message: 'Ride cannot be cancelled. It may not be assigned to you or may already be closed.' });
   }
+
+  // Restore driver status to 'active' so they can receive new ride requests
+  await Driver.updateOne({ _id: req.driver._id }, { status: 'active' });
 
   if (global.io) {
     const payload = { action: 'cancelled', bookingId: String(req.params.id), driverId: String(req.driver._id) };
