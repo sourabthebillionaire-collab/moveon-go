@@ -1,18 +1,6 @@
 import { useState, useEffect } from 'react';
+import api from '../services/api';
 import './Admin.css';
-
-const API = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
-
-async function adminFetch(path, method = 'GET', body = null, token) {
-  const res = await fetch(`${API}/admin${path}`, {
-    method,
-    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.message || 'Request failed');
-  return data;
-}
 
 function AdminLogin({ onLogin }) {
   const [password, setPassword] = useState('');
@@ -23,13 +11,7 @@ function AdminLogin({ onLogin }) {
     e.preventDefault();
     setLoading(true); setError('');
     try {
-      const res  = await fetch(`${API}/admin/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password }),
-      });
-      const data = await res.json();
-      if (!res.ok) { setError(data.message); return; }
+      const data = await api.adminLogin(password);
       localStorage.setItem('admin_token', data.token);
       onLogin(data.token);
     } catch { setError('Cannot connect to server.'); }
@@ -79,19 +61,19 @@ function Dashboard({ token, onLogout }) {
     setLoading(true);
     try {
       if (section === 'overview' || section === 'all') {
-        const s = await adminFetch('/stats', 'GET', null, token);
+        const s = await api.getAdminStats(token);
         setStats(s);
       }
       if (section === 'drivers' || section === 'all') {
-        const d = await adminFetch('/drivers', 'GET', null, token);
+        const d = await api.getAdminDrivers('all', token);
         setDrivers(d.drivers || []);
       }
       if (section === 'users' || section === 'all') {
-        const u = await adminFetch('/users', 'GET', null, token);
+        const u = await api.getAdminUsers(token);
         setUsers(u.users || []);
       }
       if (section === 'bookings' || section === 'all') {
-        const b = await adminFetch('/bookings', 'GET', null, token);
+        const b = await api.getAdminBookings(token);
         setBookings(b.bookings || []);
       }
     } catch (err) {
@@ -99,30 +81,29 @@ function Dashboard({ token, onLogout }) {
     } finally { setLoading(false); }
   };
 
-  useEffect(() => { load('all'); }, []);
-  useEffect(() => { load(tab); }, [tab]);
+  useEffect(() => { load(tab); }, [token, tab]);
 
   const approve = async (id, name, vehicleId) => {
     try {
-      await adminFetch(`/drivers/${id}/approve`, 'PUT', {}, token);
+      await api.approveDriver(id, token);
       showMsg(`✅ ${name} approved! Vehicle ID: ${vehicleId}`);
-      load('all');
+      load(tab);
     } catch (err) { showMsg(`❌ ${err.message}`, 'error'); }
   };
 
   const reject = async (id, name) => {
     if (!window.confirm(`Reject ${name}? This cannot be undone.`)) return;
     try {
-      await adminFetch(`/drivers/${id}/reject`, 'PUT', {}, token);
+      await api.rejectDriver(id, 'Rejected by admin', token);
       showMsg(`Driver ${name} rejected.`);
-      load('all');
+      load(tab);
     } catch (err) { showMsg(`❌ ${err.message}`, 'error'); }
   };
 
   const deleteDriver = async (id, name) => {
     if (!window.confirm(`Permanently delete ${name}?`)) return;
     try {
-      await adminFetch(`/drivers/${id}`, 'DELETE', null, token);
+      await api.deleteDriver(id, token);
       showMsg(`Driver ${name} deleted.`);
       load('drivers');
     } catch (err) { showMsg(`❌ ${err.message}`, 'error'); }

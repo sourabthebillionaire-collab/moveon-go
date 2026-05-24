@@ -66,7 +66,7 @@ export default function History() {
       try {
         const token = getToken();
         // FIX: Ensure loading is stopped even on early exit
-        if (!token) { setError('Please sign in to view history.'); return; } 
+        if (!token) { setError('Please sign in to view history.'); setLoading(false); return; } 
         const data = await api.getBookings(token); // FIX: Ensure API call is awaited
         setBookings(data.bookings || []);
       } catch {

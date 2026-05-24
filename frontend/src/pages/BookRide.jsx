@@ -111,15 +111,18 @@ const storedBooking = getActiveBooking();
       const result = await api.getActiveBooking(getToken());
       const activeBooking = result?.booking;
       
-      // FIX: Be less destructive. Only clear if the server confirms it's gone (404).
-      // On 500 or network error, we stay on the existing local state.
+      // ✅ RECOVERY LOGIC: If the API confirms NO active booking exists for the user,
+      // then we clear the local session.
       if (result && !activeBooking) {
          clearActiveBooking();
          setBooking(null);
          setBookingId(null);
          setDriver(null);
          return;
-      } else if (!result || !activeBooking) return;
+      } 
+
+      // If we got here but activeBooking is null (unlikely due to check above), just wait.
+      if (!activeBooking) return;
 
       // ✅ Refresh booking state from backend
       const activeDriver = activeBooking.driverId ? {
@@ -277,7 +280,14 @@ const storedBooking = getActiveBooking();
         }
       } catch (err) {
         console.error('Failed to restore booking:', err);
-        clearActiveBooking();
+        // FIX: Only clear if the server confirms the booking is actually gone.
+        // Status 404 = Gone, Status 401 = Logged out.
+        if (err.status === 404 || err.status === 401) {
+          clearActiveBooking();
+          setBooking(null);
+          setBookingId(null);
+          setDriver(null);
+        }
       }
     })();
   }, []);

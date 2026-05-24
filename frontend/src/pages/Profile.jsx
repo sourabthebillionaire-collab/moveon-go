@@ -34,8 +34,21 @@ export default function Profile() {
   useEffect(() => {
     const token = getToken();
     if (!token) return;
+    
+    // Fetch bookings for trip count
     api.getBookings(token)
       .then(d => setTripCount((d.bookings || []).length))
+      .catch(() => {});
+
+    // FIX Bug #3: Hydrate full user profile to sync name/email immediately
+    api.getProfile(token)
+      .then(data => {
+        if (data.user) {
+          if (updateUser) updateUser(data.user);
+          setName(data.user.name || '');
+          setEmail(data.user.email || '');
+        }
+      })
       .catch(() => {});
   }, []);
 
