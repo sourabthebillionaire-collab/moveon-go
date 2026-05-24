@@ -16,7 +16,7 @@
    - `npm run dev` - Development mode
 
 2. **`Procfile`** - Tells Heroku what to run
-   - Starts backend server on port 3001
+   - Starts backend server (assigns PORT dynamically via environment)
 
 3. **`backend/.env.production`** - Template for production vars
    - Instructions included

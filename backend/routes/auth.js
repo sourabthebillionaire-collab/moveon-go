@@ -16,29 +16,31 @@ router.post('/login', authLimiter, asyncHandler(async (req, res) => {
     return res.status(400).json({ message: 'Phone number is required.' });
   }
 
-  // Clean phone number — keep only digits and +
-  phone = phone.trim().replace(/[^0-9+]/g, '');
-
-  // Must be at least 10 digits
-  if (phone.replace(/\D/g, '').length < 10) {
+  // FIX: Standardize phone cleaning to ensure consistent IDs (no spaces, dashes, or leading zeros)
+  const normalizedPhone = phone.trim().replace(/[^0-9+]/g, '');
+  if (normalizedPhone.replace(/\D/g, '').length < 10) {
     logger.warn(`Login attempt with invalid phone: ${phone}`);
     return res.status(400).json({ message: 'Please enter a valid 10-digit phone number.' });
   }
 
-  // Find existing user or create new one
-  let user = await User.findOne({ phone });
+  let user = await User.findOne({ phone: normalizedPhone });
   const isNew = !user;
 
   if (!user) {
     user = await User.create({
-      phone,
+      phone: normalizedPhone,
       name: name?.trim() || '',
       lastLogin: new Date(),
     });
-    logger.info(`New user registered: ${phone}`);
+    logger.info(`New user registered: ${normalizedPhone}`);
   } else {
-    await User.updateOne({ _id: user._id }, { lastLogin: new Date() });
-    logger.info(`User login: ${phone}`);
+    const update = { lastLogin: new Date() };
+    if (name && !user.name) {
+      update.name = name.trim();
+      user.name = update.name;
+    }
+    await User.updateOne({ _id: user._id }, update);
+    logger.info(`User login: ${normalizedPhone}`);
   }
 
   // Generate JWT token
@@ -59,7 +61,7 @@ router.post('/login', authLimiter, asyncHandler(async (req, res) => {
 }));
 
 // GET /api/auth/me — get current user
-router.get('/me', protect, (req, res) => {
+router.get('/me', protect, asyncHandler(async (req, res) => {
   res.json({
     user: {
       id:    req.user._id,
@@ -69,24 +71,25 @@ router.get('/me', protect, (req, res) => {
       role:  req.user.role,
     },
   });
-});
+}));
 
 // PUT /api/auth/me — update profile
-router.put('/me', protect, async (req, res) => {
-  try {
-    const { name, email } = req.body;
-    const update = {};
-    if (name  !== undefined) update.name  = name.trim();
-    if (email !== undefined) update.email = email.trim();
+router.put('/me', protect, asyncHandler(async (req, res) => {
+  const { name, email } = req.body;
+  const update = {};
+  if (name  !== undefined) update.name  = name.trim();
+  if (email !== undefined) update.email = email.trim();
 
-    const user = await User.findByIdAndUpdate(req.user._id, update, { new: true });
-    res.json({
-      message: 'Profile updated.',
-      user: { id: user._id, phone: user.phone, name: user.name, email: user.email },
-    });
-  } catch (err) {
-    res.status(500).json({ message: 'Failed to update profile.' });
+  const user = await User.findByIdAndUpdate(req.user._id, update, { new: true });
+  
+  if (!user) {
+    return res.status(404).json({ message: 'User not found.' });
   }
-});
+
+  res.json({
+    message: 'Profile updated.',
+    user: { id: user._id, phone: user.phone, name: user.name, email: user.email },
+  });
+}));
 
 module.exports = router;

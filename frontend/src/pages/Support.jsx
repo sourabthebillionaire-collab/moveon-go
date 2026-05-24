@@ -74,7 +74,10 @@ export default function Support() {
                 <button
                   type="button"
                   className="sup-faq__q"
-                  onClick={() => toggleFaq(i)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleFaq(i);
+                  }}
                 >
                   <span>{faq.q}</span>
                   <span className="sup-faq__arrow">{openFaq === i ? '▲' : '▼'}</span>

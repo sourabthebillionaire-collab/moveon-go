@@ -1,8 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import api from '../services/api';
 import './DriverRegister.css';
-
-const API = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 
 const VEHICLE_TYPES = [
   { id: 'bus',  emoji: '🚌', label: 'Bus',           desc: 'City / intercity bus service' },
@@ -96,26 +95,21 @@ export default function DriverRegister() {
     if (err) { setError(err); return; }
     setLoading(true); setError('');
     try {
-      const res = await fetch(`${API}/driver/register`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name:          form.name.trim(),
-          phone:         form.phone.trim(),
-          email:         form.email.trim(),
-          address:       form.address.trim(),
-          licenseNumber: form.licenseNumber.trim(),
-          vehicleType:   form.vehicleType,
-          vehicleNumber: form.vehicleNumber.trim().toUpperCase(),
-          busName:       form.busName.trim(),
-          routeFrom:     form.routeFrom.trim(),
-          routeTo:       form.routeTo.trim(),
-          routeNumber:   form.routeNumber.trim(),
-          pin:           form.pin,
-        }),
+      const data = await api.driverRegister({
+        name:          form.name.trim(),
+        phone:         form.phone.trim(),
+        email:         form.email.trim(),
+        address:       form.address.trim(),
+        licenseNumber: form.licenseNumber.trim(),
+        vehicleType:   form.vehicleType,
+        vehicleNumber: form.vehicleNumber.trim().toUpperCase(),
+        busName:       form.busName.trim(),
+        routeFrom:     form.routeFrom.trim(),
+        routeTo:       form.routeTo.trim(),
+        routeNumber:   form.routeNumber.trim(),
+        pin:           form.pin,
       });
-      const data = await res.json();
-      if (!res.ok) { setError(data.message || 'Registration failed.'); return; }
+      
       setResult(data);
       setStep(4);
     } catch {

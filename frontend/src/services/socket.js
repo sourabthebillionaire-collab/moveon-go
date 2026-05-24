@@ -11,8 +11,10 @@ const SOCKET_URL = (() => {
   const envUrl = import.meta.env.VITE_SOCKET_URL?.trim();
   if (envUrl) return envUrl;
   if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+    // Default to backend port in development
     return 'http://localhost:3001';
   }
+  // Fallback to the current origin for production (Vercel/Heroku unified domain)
   return window.location.origin;
 })();
 

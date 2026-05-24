@@ -5,7 +5,12 @@
  * Default: http://localhost:3001/api
  */
 
-const BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+// FIX: Trim accidental whitespace from env var to prevent connection failures.
+// PRODUCTION: Default to relative '/api' if no env var is provided, 
+// which is ideal when the backend serves the frontend.
+const BASE = import.meta.env.VITE_API_URL?.trim() || 
+             (import.meta.env.PROD ? '/api' : 'http://localhost:3001/api');
+
 const REQUEST_TIMEOUT = 10000; // 10 seconds
 
 async function request(method, path, body = null, token = null) {
@@ -79,7 +84,7 @@ export const api = {
     post('/driver/duty', { onDuty }, token),
 
   respondToRide: (rideId, action, token) =>
-    post(`/bookings/${rideId}/respond`, { action }, token),
+    post(`/rides/${rideId}/respond`, { action }, token),
 
   // ── Vehicles / Buses ──────────────────────────────────────────
   getNearbyVehicles: (lat, lng, type = 'all') =>
@@ -125,6 +130,9 @@ export const api = {
   // Any non-cash payment crashed with "api.createPaymentOrder is not a function".
   createPaymentOrder: (data, token) =>
     post('/payments/create-order', data, token),
+
+  verifyPayment: (data, token) =>
+    post('/payments/verify', data, token),
 
   // ── Fare ──────────────────────────────────────────────────────
   getFareEstimate: (from, to, vehicleType) =>

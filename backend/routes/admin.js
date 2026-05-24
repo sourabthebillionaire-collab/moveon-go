@@ -14,6 +14,7 @@
 const router = require('express').Router();
 const jwt    = require('jsonwebtoken');
 const { Driver, User, Booking, BusRoute } = require('../models');
+const { asyncHandler } = require('../utils/errorHandler');
 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'pujasarkar';
 const JWT_SECRET     = process.env.JWT_SECRET;
@@ -47,8 +48,7 @@ router.post('/login', (req, res) => {
 });
 
 // GET /api/admin/stats
-router.get('/stats', adminAuth, async (req, res) => {
-  try {
+router.get('/stats', adminAuth, asyncHandler(async (req, res) => {
     const [
       totalUsers,
       totalDrivers,
@@ -76,14 +76,10 @@ router.get('/stats', adminAuth, async (req, res) => {
       completedBookings,
       todayBookings,
     });
-  } catch (err) {
-    res.status(500).json({ message: 'Failed to fetch stats.' });
-  }
-});
+}));
 
 // GET /api/admin/drivers?status=pending|approved|all
-router.get('/drivers', adminAuth, async (req, res) => {
-  try {
+router.get('/drivers', adminAuth, asyncHandler(async (req, res) => {
     const { status } = req.query;
     let query = { isActive: true };
     if (status === 'pending')  query.isApproved = false;
@@ -94,14 +90,10 @@ router.get('/drivers', adminAuth, async (req, res) => {
       .sort({ createdAt: -1 });
 
     res.json({ drivers, count: drivers.length });
-  } catch (err) {
-    res.status(500).json({ message: 'Failed to fetch drivers.' });
-  }
-});
+}));
 
 // PUT /api/admin/drivers/:id/approve
-router.put('/drivers/:id/approve', adminAuth, async (req, res) => {
-  try {
+router.put('/drivers/:id/approve', adminAuth, asyncHandler(async (req, res) => {
     const driver = await Driver.findByIdAndUpdate(
       req.params.id,
       { isApproved: true },
@@ -115,14 +107,10 @@ router.put('/drivers/:id/approve', adminAuth, async (req, res) => {
     }
 
     res.json({ message: `Driver ${driver.name} approved. Vehicle ID: ${driver.vehicleId}`, driver });
-  } catch (err) {
-    res.status(500).json({ message: 'Failed to approve driver.' });
-  }
-});
+}));
 
 // PUT /api/admin/drivers/:id/reject
-router.put('/drivers/:id/reject', adminAuth, async (req, res) => {
-  try {
+router.put('/drivers/:id/reject', adminAuth, asyncHandler(async (req, res) => {
     const { reason } = req.body;
     const driver = await Driver.findByIdAndUpdate(
       req.params.id,
@@ -140,14 +128,10 @@ router.put('/drivers/:id/reject', adminAuth, async (req, res) => {
     }
 
     res.json({ message: `Driver ${driver.name} rejected.`, driver });
-  } catch (err) {
-    res.status(500).json({ message: 'Failed to reject driver.' });
-  }
-});
+}));
 
 // DELETE /api/admin/drivers/:id  ✅ NOW KICKS DRIVER INSTANTLY
-router.delete('/drivers/:id', adminAuth, async (req, res) => {
-  try {
+router.delete('/drivers/:id', adminAuth, asyncHandler(async (req, res) => {
     const driver = await Driver.findByIdAndDelete(req.params.id);
     if (!driver) return res.status(404).json({ message: 'Driver not found.' });
 
@@ -160,33 +144,22 @@ router.delete('/drivers/:id', adminAuth, async (req, res) => {
     }
 
     res.json({ message: `Driver ${driver.name} deleted.` });
-  } catch (err) {
-    res.status(500).json({ message: 'Failed to delete driver.' });
-  }
-});
+}));
 
 // GET /api/admin/users
-router.get('/users', adminAuth, async (req, res) => {
-  try {
+router.get('/users', adminAuth, asyncHandler(async (req, res) => {
     const users = await User.find().sort({ createdAt: -1 }).select('-__v');
     res.json({ users, count: users.length });
-  } catch (err) {
-    res.status(500).json({ message: 'Failed to fetch users.' });
-  }
-});
+}));
 
 // GET /api/admin/bookings
-router.get('/bookings', adminAuth, async (req, res) => {
-  try {
+router.get('/bookings', adminAuth, asyncHandler(async (req, res) => {
     const bookings = await Booking.find()
       .populate('userId', 'phone name')
       .populate('driverId', 'name vehicleNumber vehicleType')
       .sort({ createdAt: -1 })
       .limit(100);
     res.json({ bookings, count: bookings.length });
-  } catch (err) {
-    res.status(500).json({ message: 'Failed to fetch bookings.' });
-  }
-});
+}));
 
 module.exports = router;

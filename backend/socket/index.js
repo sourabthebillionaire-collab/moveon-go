@@ -194,12 +194,12 @@ module.exports = function initSocket(io) {
     try {
       const stale = await Driver.find({
         onDuty: true,
-        'location.updatedAt': { $lt: new Date(Date.now() - 120000) },
-      });
+        'location.updatedAt': { $lt: new Date(Date.now() - 60000) },
+      }).select('_id'); // Optimization: only fetch IDs
       for (const d of stale) {
         await Driver.updateOne({ _id: d._id }, { status: 'offline', onDuty: false });
         activeVehiclePositions.delete(String(d._id));
-
+        
         // ── BUG FIX #3 ───────────────────────────────────────────
         // Stale-driver cleanup also needs to notify any active rider.
         // Previously this only did io.emit('driver:offline') which
@@ -220,5 +220,5 @@ module.exports = function initSocket(io) {
         io.emit('driver:offline', { driverId: d._id });
       }
     } catch {}
-  }, 120000);
+  }, 60000); // FIX: Run every 60 seconds for tighter tracking
 };

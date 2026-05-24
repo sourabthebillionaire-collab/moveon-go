@@ -27,12 +27,15 @@ export async function reverseGeocode(lat, lng) {
   try {
     const p = new URLSearchParams({ lat, lon: lng, format: 'json', zoom: '16' });
     const res = await fetch(`${BASE}/reverse?${p}`, { headers: HEADERS });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    
     const d = await res.json();
-    if (d.error) return 'Current Location';
+    if (d.error) throw new Error(d.error);
+    
     const a = d.address || {};
     return [a.road || a.pedestrian, a.suburb || a.neighbourhood, a.city || a.town || a.village]
       .filter(Boolean).slice(0, 2).join(', ') || 'Current Location';
-  } catch { return 'Current Location'; }
+  } catch (e) { console.warn('[Geocoding] Reverse failed:', e.message); return 'Current Location'; }
 }
 
 function shortName(d) {
@@ -63,7 +66,7 @@ export function watchPosition(cb, errCb) {
       console.warn('GPS error:', e.message);
       if (errCb) errCb(e);
     },
-    { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 }
+    { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
   );
   return () => navigator.geolocation.clearWatch(id);
 }

@@ -21,17 +21,18 @@ router.post('/', protect, bookingLimiter, asyncHandler(async (req, res) => {
   }
 
   // FIX: Validate that coords are real numeric lat/lng before storing.
-  // Previously NaN/null coords silently stored as bad data.
   const isValidCoord = (c) =>
-    c && typeof c.lat === 'number' && typeof c.lng === 'number' &&
-    !isNaN(c.lat) && !isNaN(c.lng);
+    c && 
+    typeof c.lat === 'number' && 
+    typeof c.lng === 'number' &&
+    Math.abs(c.lat) <= 90 && Math.abs(c.lng) <= 180;
 
   if (!isValidCoord(pickupCoords) || !isValidCoord(dropoffCoords)) {
     logger.warn('Booking creation: invalid coordinates', { userId: req.user._id });
     return res.status(400).json({ message: 'Invalid pickup or drop-off coordinates.' });
   }
 
-  const amount = fareAmount || 50;
+  const amount = (fareAmount !== undefined && fareAmount !== null) ? fareAmount : 50;
 
   const booking = await Booking.create({
     userId:      req.user._id,
@@ -114,7 +115,6 @@ router.post('/:id/respond', protectDriver, asyncHandler(async (req, res) => {
       }
       const eventPayload = { action: 'accept', driver: driverPayload };
       global.io.to(`booking:${bookingId}`).emit(`booking:${bookingId}`, eventPayload);
-      global.io.emit(`booking:${bookingId}`, eventPayload);
     }
 
     res.json({ message: 'Booking accepted successfully.', driver: driverPayload });
@@ -123,7 +123,6 @@ router.post('/:id/respond', protectDriver, asyncHandler(async (req, res) => {
     logger.info(`Booking declined: ${bookingId}`, { driverId: req.driver._id });
     if (global.io) {
       global.io.to(`booking:${bookingId}`).emit(`booking:${bookingId}`, { action: 'decline' });
-      global.io.emit(`booking:${bookingId}`, { action: 'decline' });
     }
     res.json({ message: 'Booking declined.' });
   }
@@ -168,7 +167,6 @@ router.put('/:id/start', protectDriver, asyncHandler(async (req, res) => {
     };
     logger.info(`Emitting started for booking ${req.params.id}`, { driverId: req.driver._id });
     global.io.to(`booking:${req.params.id}`).emit(`booking:${req.params.id}`, payload);
-    global.io.emit(`booking:${req.params.id}`, payload);
   }
 
   res.json({ message: 'Ride started.' });
@@ -202,7 +200,6 @@ router.put('/:id/complete', protectDriver, asyncHandler(async (req, res) => {
     };
     logger.info(`Emitting completed for booking ${req.params.id}`, { driverId: req.driver._id });
     global.io.to(`booking:${req.params.id}`).emit(`booking:${req.params.id}`, payload);
-    global.io.emit(`booking:${req.params.id}`, payload);
     global.io.activeBookings?.delete(String(req.params.id));
   }
 
@@ -228,7 +225,6 @@ router.put('/:id/cancel', protectDriver, asyncHandler(async (req, res) => {
     const payload = { action: 'cancelled', bookingId: String(req.params.id), driverId: String(req.driver._id) };
     logger.info(`Emitting cancelled for booking ${req.params.id}`, { driverId: req.driver._id });
     global.io.to(`booking:${req.params.id}`).emit(`booking:${req.params.id}`, payload);
-    global.io.emit(`booking:${req.params.id}`, payload);
     global.io.activeBookings?.delete(String(req.params.id));
   }
 
@@ -287,9 +283,11 @@ router.delete('/:id', protect, asyncHandler(async (req, res) => {
       global.io.activeBookings.delete(String(req.params.id));
     }
     global.io.to(`booking:${req.params.id}`).emit(`booking:${req.params.id}`, { action: 'cancelled' });
-    global.io.emit(`booking:${req.params.id}`, { action: 'cancelled' });
 
     if (booking.driverId) {
+      // FIX: Ensure driver is set back to 'active' status so they can receive new rides.
+      await Driver.updateOne({ _id: booking.driverId }, { status: 'active' });
+
       global.io.to(`driver:${String(booking.driverId)}`).emit('booking:cancelled', {
         bookingId: String(booking._id), action: 'cancelled',
       });

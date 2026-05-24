@@ -1,9 +1,9 @@
 const router = require('express').Router();
 const { Driver } = require('../models');
+const { asyncHandler } = require('../utils/errorHandler');
 
 // GET /api/vehicles/nearby?lat=&lng=&type=
-router.get('/nearby', async (req, res) => {
-  try {
+router.get('/nearby', asyncHandler(async (req, res) => {
     const { lat, lng, type } = req.query;
     if (!lat || !lng) return res.status(400).json({ message: 'lat and lng required.' });
 
@@ -37,20 +37,13 @@ router.get('/nearby', async (req, res) => {
     }));
 
     res.json({ vehicles, count: vehicles.length });
-  } catch (err) {
-    res.status(500).json({ message: 'Failed to fetch vehicles.' });
-  }
-});
+}));
 
 // GET /api/vehicles/:id
-router.get('/:id', async (req, res) => {
-  try {
+router.get('/:id', asyncHandler(async (req, res) => {
     const driver = await Driver.findById(req.params.id).select('-pinHash');
     if (!driver) return res.status(404).json({ message: 'Vehicle not found.' });
     res.json({ vehicle: driver });
-  } catch (err) {
-    res.status(500).json({ message: 'Failed to fetch vehicle.' });
-  }
-});
+}));
 
 module.exports = router;

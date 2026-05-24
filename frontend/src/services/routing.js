@@ -9,6 +9,7 @@ export async function getRoute(from, to, mode = 'driving') {
   try {
     const url = `${OSRM}/${mode}/${from.lng},${from.lat};${to.lng},${to.lat}?overview=full&geometries=geojson&steps=false`;
     const res = await fetch(url);
+    if (!res.ok) throw new Error('Routing service unavailable');
     const data = await res.json();
     if (data.code !== 'Ok' || !data.routes?.[0]) return null;
     const r = data.routes[0];

@@ -1,9 +1,9 @@
 const router = require('express').Router();
 const { Driver, BusRoute } = require('../models');
+const { asyncHandler } = require('../utils/errorHandler');
 
 // GET /api/buses/routes
-router.get('/routes', async (req, res) => {
-  try {
+router.get('/routes', asyncHandler(async (req, res) => {
     const routes = await BusRoute.find({ isActive: true }).select('-__v');
 
     const enriched = await Promise.all(routes.map(async (route) => {
@@ -28,9 +28,6 @@ router.get('/routes', async (req, res) => {
     }));
 
     res.json({ routes: enriched.filter(r => r.status === 'active') });
-  } catch (err) {
-    res.status(500).json({ message: 'Failed to fetch bus routes.' });
-  }
-});
+}));
 
 module.exports = router;

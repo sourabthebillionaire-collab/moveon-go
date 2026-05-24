@@ -51,4 +51,25 @@ router.post('/create-order', protect, asyncHandler(async (req, res) => {
   }
 }));
 
+// POST /api/payments/verify
+router.post('/verify', protect, asyncHandler(async (req, res) => {
+  const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
+  const crypto = require('crypto');
+  const secret = process.env.RAZORPAY_KEY_SECRET;
+
+  if (!secret) return res.status(500).json({ message: 'Razorpay secret not configured' });
+
+  const hmac = crypto.createHmac('sha256', secret);
+  hmac.update(razorpay_order_id + "|" + razorpay_payment_id);
+  const generatedSignature = hmac.digest('hex');
+
+  if (generatedSignature === razorpay_signature) {
+    logger.info(`Payment verified for order: ${razorpay_order_id}`);
+    res.json({ verified: true });
+  } else {
+    logger.warn(`Signature mismatch for order: ${razorpay_order_id}`);
+    res.status(400).json({ verified: false, message: 'Invalid payment signature' });
+  }
+}));
+
 module.exports = router;

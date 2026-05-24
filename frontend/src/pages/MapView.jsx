@@ -163,10 +163,13 @@ export default function MapView() {
     const id = String(v.id);
     const existing = markersRef.current[id];
     if (existing) {
-      existing.setLatLng([v.lat, v.lng]);
+      // FIX #18: Add tiny jitter to prevent perfect marker overlap at depots
+      const jitter = (Math.random() - 0.5) * 0.0001;
+      existing.setLatLng([v.lat + jitter, v.lng + jitter]);
       existing.setPopupContent(buildPopup(v));
     } else {
-      const m = L.marker([v.lat, v.lng], { icon: vehicleIcon(v.type) })
+      const jitter = (Math.random() - 0.5) * 0.0001;
+      const m = L.marker([v.lat + jitter, v.lng + jitter], { icon: vehicleIcon(v.type) })
         .addTo(map)
         .on('click', () => focusVehicle(v));
       m.bindPopup(buildPopup(v));

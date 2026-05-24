@@ -19,7 +19,8 @@ const { authLimiter } = require('../utils/rateLimiter');
 // Generate unique Vehicle ID
 async function generateVehicleId(vehicleType, vehicleNumber) {
   const prefix = vehicleType.toUpperCase().slice(0, 3);
-  const numPart = vehicleNumber.replace(/[^0-9]/g, '').slice(-4) || '0001';
+  // FIX: Ensure numPart is never empty and handles short vehicle numbers safely
+  const numPart = vehicleNumber.replace(/[^A-Z0-9]/gi, '').slice(-4).padStart(4, '0');
   const base = `MG-${prefix}-${numPart}`;
   // Check if exists, add suffix if needed
   const exists = await Driver.findOne({ vehicleId: base });
@@ -160,7 +161,10 @@ router.post('/login', authLimiter, asyncHandler(async (req, res) => {
 // POST /api/driver/location
 router.post('/location', protectDriver, asyncHandler(async (req, res) => {
   const { lat, lng, bearing, speed, status } = req.body;
-  if (!lat || !lng) return res.status(400).json({ message: 'lat and lng required.' });
+  
+  // FIX: Harden coordinate validation to prevent NaN or non-numeric storage
+  const isNum = (v) => typeof v === 'number' && !isNaN(v);
+  if (!isNum(lat) || !isNum(lng)) return res.status(400).json({ message: 'Valid numeric lat and lng required.' });
 
   await Driver.updateOne({ _id: req.driver._id }, {
     'location.lat':       lat,
@@ -177,6 +181,10 @@ router.post('/location', protectDriver, asyncHandler(async (req, res) => {
     global.io.emit('vehicles:update', {
       id: req.driver._id, vehicleId: req.driver.vehicleId,
       vehicleNumber: req.driver.vehicleNumber, type: req.driver.vehicleType,
+      busName:       req.driver.busName   || '',
+      routeFrom:     req.driver.routeFrom || '',
+      routeTo:       req.driver.routeTo   || '',
+      routeNumber:   req.driver.routeNumber || '',
       lat, lng, bearing, speed, status: status || 'active',
     });
   }
@@ -195,8 +203,8 @@ router.post('/duty', protectDriver, asyncHandler(async (req, res) => {
 }));
 
 // GET /api/driver/me
-router.get('/me', protectDriver, (req, res) => {
+router.get('/me', protectDriver, asyncHandler(async (req, res) => {
   res.json({ driver: req.driver });
-});
+}));
 
 module.exports = router;

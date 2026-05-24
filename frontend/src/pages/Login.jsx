@@ -1,10 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
+import api from '../services/api';
 import './Login.css';
-
-const API = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
-
 export default function Login() {
   const navigate  = useNavigate();
   const location  = useLocation();
@@ -37,15 +35,8 @@ export default function Login() {
 
     setLoading(true);
     try {
-      const res = await fetch(`${API}/auth/login`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ phone: cleanPhone, name: name.trim() }),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
+      const data = await api.login(cleanPhone, name.trim());
+      if (!data.token) {
         setError(data.message || 'Login failed. Please try again.');
         return;
       }
@@ -54,7 +45,7 @@ export default function Login() {
       navigate(from, { replace: true });
 
     } catch (err) {
-      setError('Cannot connect to server. Make sure backend is running.');
+      setError(err.message || 'Service unreachable. Please check your internet connection.');
     } finally {
       setLoading(false);
     }

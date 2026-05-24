@@ -14,7 +14,11 @@ const K = {
   ACTIVE_DRIVER_RIDE: 'mg_active_driver_ride',
 };
 
-function read(key)        { try { return JSON.parse(localStorage.getItem(key)); } catch { return null; } }
+function read(key) {
+  const val = localStorage.getItem(key);
+  if (!val) return null;
+  try { return JSON.parse(val); } catch (e) { console.error(`Storage parse error for ${key}:`, e); return null; }
+}
 function write(key, val)  { localStorage.setItem(key, JSON.stringify(val)); }
 function remove(key)      { localStorage.removeItem(key); }
 
