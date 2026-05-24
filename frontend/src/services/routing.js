@@ -20,7 +20,7 @@ export async function getRoute(from, to, mode = 'driving') {
       distanceKm:  (r.distance / 1000).toFixed(1),
       durationMin: Math.ceil(r.duration / 60),
     };
-  } catch { return null; }
+  } catch (e) { console.warn('[Routing] Failed to fetch route:', e.message); return null; }
 }
 
 export function calcFare(distanceKm, type) {

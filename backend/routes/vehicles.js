@@ -5,11 +5,13 @@ const { asyncHandler } = require('../utils/errorHandler');
 // GET /api/vehicles/nearby?lat=&lng=&type=
 router.get('/nearby', asyncHandler(async (req, res) => {
     const { lat, lng, type } = req.query;
-    if (!lat || !lng) return res.status(400).json({ message: 'lat and lng required.' });
+
+    const isNum = (v) => v !== undefined && v !== null && v !== '' && !isNaN(parseFloat(v));
+    if (!isNum(lat) || !isNum(lng)) return res.status(400).json({ message: 'Valid numeric lat and lng required.' });
 
     const radiusKm = 10;
     const latDelta = radiusKm / 111;
-    const lngDelta = radiusKm / (111 * Math.cos(parseFloat(lat) * Math.PI / 180));
+    const lngDelta = radiusKm / (111 * Math.abs(Math.cos(parseFloat(lat) * Math.PI / 180)) || 1);
 
     const query = {
       onDuty:   true,

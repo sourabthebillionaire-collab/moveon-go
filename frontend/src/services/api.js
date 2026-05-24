@@ -6,8 +6,7 @@
  */
 
 // FIX: Trim accidental whitespace from env var to prevent connection failures.
-// PRODUCTION: Default to relative '/api' if no env var is provided, 
-// which is ideal when the backend serves the frontend.
+// PRODUCTION: Use relative path if no env var, facilitating 'Single-Horizon' deployments.
 const BASE = import.meta.env.VITE_API_URL?.trim() || 
              (import.meta.env.PROD ? '/api' : 'http://localhost:3001/api');
 
@@ -118,8 +117,8 @@ export const api = {
     get('/bookings/driver-active', token),
 
   // Driver ride lifecycle
-  startRide: (bookingId, token) =>
-    put(`/bookings/${bookingId}/start`, null, token),
+  startRide: (bookingId, otp, token) => 
+    put(`/bookings/${bookingId}/start`, { otp: String(otp) }, token),
   completeRide: (bookingId, token) =>
     put(`/bookings/${bookingId}/complete`, null, token),
   cancelRide: (bookingId, token) =>

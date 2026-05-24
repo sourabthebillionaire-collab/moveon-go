@@ -12,7 +12,12 @@ router.get('/routes', asyncHandler(async (req, res) => {
         onDuty:   true,
         isActive: true,
         'location.updatedAt': { $gte: new Date(Date.now() - 60000) },
-      }).select('location status vehicleNumber');
+      }).select('location status vehicleNumber passengers');
+
+      // FIX: Deterministic ETA instead of Math.random()
+      // Use the route ID to create a stable "base" time that doesn't jump on refresh
+      const routeSeed = parseInt(String(route._id).slice(-4), 16) || 1;
+      const mockEta = (routeSeed % 10) + 2; 
 
       return {
         id:        route._id,
@@ -23,11 +28,20 @@ router.get('/routes', asyncHandler(async (req, res) => {
         frequency: route.frequency,
         status:    liveDrivers.length > 0 ? 'active' : 'inactive',
         liveCount: liveDrivers.length,
-        eta:       liveDrivers.length > 0 ? `${2 + Math.floor(Math.random() * 8)} min` : '--',
+        eta:       liveDrivers.length > 0 ? `${mockEta} min` : '--',
+        // Show the occupancy of the nearest bus
+        seats:     liveDrivers.length > 0 ? Math.max(0, 60 - (liveDrivers[0].passengers || 0)) : null
       };
     }));
 
     res.json({ routes: enriched.filter(r => r.status === 'active') });
+}));
+
+// GET /api/buses/route/:id
+router.get('/route/:id', asyncHandler(async (req, res) => {
+  const route = await BusRoute.findById(req.params.id).lean();
+  if (!route) return res.status(404).json({ message: 'Route not found.' });
+  res.json({ route });
 }));
 
 module.exports = router;

@@ -48,6 +48,7 @@ export default function BookRide() {
   const [booking,       setBooking]       = useState(null);
   const [bookingId,     setBookingId]     = useState(null);
   const [driver,        setDriver]        = useState(null);
+  const [otp,           setOtp]           = useState(null);
   const [driverLocation, setDriverLocation] = useState(null);
   const [socketDebug, setSocketDebug] = useState([]);
   const [countdown,     setCountdown]     = useState(TIMEOUT_SECONDS);
@@ -104,16 +105,21 @@ const storedBooking = getActiveBooking();
           driverIdRef.current = initialBooking.driver.driverId || initialBooking.driver.driverId;
         }
       }
+      // FIX: Ensure OTP is restored from local storage if available
+      if (initialBooking.otp) setOtp(initialBooking.otp);
 
       const result = await api.getActiveBooking(getToken());
       const activeBooking = result?.booking;
-      if (!activeBooking) {
-        clearActiveBooking();
-        setBooking(null);
-        setBookingId(null);
-        setDriver(null);
-        return;
-      }
+      
+      // FIX: Be less destructive. Only clear if the server confirms it's gone (404).
+      // On 500 or network error, we stay on the existing local state.
+      if (result && !activeBooking) {
+         clearActiveBooking();
+         setBooking(null);
+         setBookingId(null);
+         setDriver(null);
+         return;
+      } else if (!result || !activeBooking) return;
 
       // ✅ Refresh booking state from backend
       const activeDriver = activeBooking.driverId ? {
@@ -143,6 +149,9 @@ const storedBooking = getActiveBooking();
         setDriver(activeDriver);
         driverIdRef.current = activeDriver.driverId;
       }
+      if (activeBooking.startOTP) setOtp(activeBooking.startOTP);
+      // FIX: Ensure OTP is saved to local storage
+
       setActiveBooking({
         id: activeBooking._id,
         status: activeBooking.status,
@@ -156,6 +165,7 @@ const storedBooking = getActiveBooking();
         fare: activeBooking.fare,
         driver: activeDriver,
         eta: activeBooking.eta,
+        otp: activeBooking.startOTP, // Persist OTP to local storage
       });
 
       // Re-establish socket listeners
@@ -183,11 +193,13 @@ const storedBooking = getActiveBooking();
           if (data.action === 'accept' && data.driver) {
             setDriver(data.driver);
             driverIdRef.current = data.driver.driverId;
+            if (data.otp) setOtp(data.otp);
             setBooking('found');
             const currentBooking = getActiveBooking();
             setActiveBooking({
               ...(typeof currentBooking === 'object' && currentBooking ? currentBooking : {}),
               status: 'accepted',
+              otp: data.otp, // Ensure OTP is updated in local storage on accept
               driver: data.driver,
             });
           } else if (data.action === 'started') {
@@ -213,6 +225,8 @@ const storedBooking = getActiveBooking();
             setBookingId(null);
             setDriver(null);
             setDriverLocation(null);
+            setRoute(null);
+            setFare(null);
           } else if (data.action === 'cancelled') {
             socket.off(bookingEvent);
             if (driverLocationRef.current) {
@@ -228,6 +242,8 @@ const storedBooking = getActiveBooking();
             setBookingId(null);
             setDriver(null);
             setDriverLocation(null);
+            setRoute(null);
+            setFare(null);
           } else if (data.action === 'driver_offline') {
             socket.off(bookingEvent);
             if (driverLocationRef.current) {
@@ -242,6 +258,7 @@ const storedBooking = getActiveBooking();
             setBooking('driver_offline');
             setBookingId(null);
             setDriver(null);
+            setActiveBooking({ ...getActiveBooking(), status: 'driver_offline' }); // FIX: Update local storage status
             setDriverLocation(null);
           }
         });
@@ -332,11 +349,13 @@ const storedBooking = getActiveBooking();
       if (!b?.id) throw new Error('No booking ID returned');
       addBooking(b);
       setBookingId(b.id);
+      if (b.otp) setOtp(b.otp);
       setActiveBooking({
         id: b.id,
         status: b.status,
         type, pickup, pickupCoords, dropoff, dropoffCoords,
         payment, fareAmount, fare: bk.fare,
+        otp: b.otp,
       });
       const socket = connectSocket();
 
@@ -374,12 +393,14 @@ const storedBooking = getActiveBooking();
         if (data.action === 'accept' && data.driver) {
           setDriver(data.driver);
           driverIdRef.current = data.driver.driverId;
+          if (data.otp) setOtp(data.otp);
           setBooking('found');
           const currentBooking = getActiveBooking();
           setActiveBooking({
             ...(typeof currentBooking === 'object' && currentBooking ? currentBooking : {}),
             status: 'accepted',
             driver: data.driver,
+            otp: data.otp,
           });
 
         } else if (data.action === 'started') {
@@ -559,6 +580,20 @@ const storedBooking = getActiveBooking();
     setBooking(null); setBookingId(null); setDriver(null); setDriverLocation(null); setPayLoading(false);
   };
 
+  // Function to manually re-fetch the OTP/Booking if "lost"
+  const refreshBooking = async () => {
+    try {
+      const result = await api.getActiveBooking(getToken());
+      if (result?.booking) {
+        setOtp(result.booking.startOTP);
+        const current = getActiveBooking();
+        setActiveBooking({ ...current, otp: result.booking.startOTP });
+      }
+    } catch (err) {
+      console.error('Failed to refresh booking:', err);
+    }
+  };
+
   // ── Searching ────────────────────────────────────────────────
   if (booking === 'searching') return (
     <div className="app">
@@ -686,10 +721,26 @@ const storedBooking = getActiveBooking();
           {payment !== 'Cash' && (
             <div className="br-paid-badge">✅ Payment Confirmed via Razorpay</div>
           )}
+
+          <div className="br-otp-card">
+            <div className="br-otp-info">
+              <span className="br-otp-label">START PIN</span>
+              <span className="br-otp-val">{otp || '----'}</span>
+            </div>
+            <button className="br-otp-btn" onClick={refreshBooking} title="Refresh PIN">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+              </svg>
+              <span>Retrieve PIN</span>
+            </button>
+          </div>
         </div>
         <div style={{display:'flex',gap:12,marginTop:16}}>
           <button className="btn btn--secondary btn--lg" style={{flex:1}} onClick={() => navigate('/map')}>Track on Map</button>
-          <button className="btn btn--danger btn--lg"    style={{flex:1}} onClick={handleCancel}>Cancel Ride</button>
+          {/* FIX: Disable cancellation if trip has already started */}
+          {getActiveBooking()?.status !== 'started' && (
+            <button className="btn btn--danger btn--lg" style={{flex:1}} onClick={handleCancel}>Cancel Ride</button>
+          )}
         </div>
       </div>
       <BottomNav/>

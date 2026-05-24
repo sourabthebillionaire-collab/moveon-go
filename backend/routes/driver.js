@@ -19,9 +19,10 @@ const { authLimiter } = require('../utils/rateLimiter');
 // Generate unique Vehicle ID
 async function generateVehicleId(vehicleType, vehicleNumber) {
   const prefix = vehicleType.toUpperCase().slice(0, 3);
-  // FIX: Ensure numPart is never empty and handles short vehicle numbers safely
+  // BUG FIX #2: Use timestamp component to further reduce collision risk in high concurrency
+  const salt = Date.now().toString().slice(-2);
   const numPart = vehicleNumber.replace(/[^A-Z0-9]/gi, '').slice(-4).padStart(4, '0');
-  const base = `MG-${prefix}-${numPart}`;
+  const base = `MG-${prefix}-${numPart}-${salt}`;
   // Check if exists, add suffix if needed
   const exists = await Driver.findOne({ vehicleId: base });
   if (!exists) return base;
@@ -166,27 +167,49 @@ router.post('/location', protectDriver, asyncHandler(async (req, res) => {
   const isNum = (v) => typeof v === 'number' && !isNaN(v);
   if (!isNum(lat) || !isNum(lng)) return res.status(400).json({ message: 'Valid numeric lat and lng required.' });
 
-  await Driver.updateOne({ _id: req.driver._id }, {
+  const update = {
     'location.lat':       lat,
     'location.lng':       lng,
     'location.bearing':   bearing || 0,
     'location.speed':     speed   || 0,
     'location.updatedAt': new Date(),
     status:               status  || 'active',
-  });
+    onDuty:               status !== 'offline',
+  };
+
+  await Driver.updateOne({ _id: req.driver._id }, update);
+
+  const posPayload = {
+    id: req.driver._id, vehicleId: req.driver.vehicleId,
+    vehicleNumber: req.driver.vehicleNumber, type: req.driver.vehicleType,
+    busName:       req.driver.busName   || '',
+    routeFrom:     req.driver.routeFrom || '',
+    routeTo:       req.driver.routeTo   || '',
+    routeNumber:   req.driver.routeNumber || '',
+    lat, lng, bearing, speed, status: status || 'active',
+    ts: Date.now(),
+  };
 
   logger.debug(`Driver location updated: ${req.driver.vehicleId}`, { lat, lng });
 
   if (global.io) {
-    global.io.emit('vehicles:update', {
-      id: req.driver._id, vehicleId: req.driver.vehicleId,
-      vehicleNumber: req.driver.vehicleNumber, type: req.driver.vehicleType,
-      busName:       req.driver.busName   || '',
-      routeFrom:     req.driver.routeFrom || '',
-      routeTo:       req.driver.routeTo   || '',
-      routeNumber:   req.driver.routeNumber || '',
-      lat, lng, bearing, speed, status: status || 'active',
-    });
+    // Broadcast to map
+    global.io.emit('vehicles:update', posPayload);
+    
+    // Sync with snapshot state
+    if (global.io.activeVehiclePositions) {
+      global.io.activeVehiclePositions.set(String(req.driver._id), posPayload);
+    }
+
+    // FIX: Notify matched rider even via REST update
+    if (global.io.driverToBooking) {
+      const bookingId = global.io.driverToBooking.get(String(req.driver._id));
+      if (bookingId) {
+        global.io.to(`booking:${bookingId}`).emit('driver:locationUpdate', {
+          driverId: req.driver._id, lat, lng, bearing, speed,
+        });
+      }
+    }
   }
 
   res.json({ message: 'Location updated.' });

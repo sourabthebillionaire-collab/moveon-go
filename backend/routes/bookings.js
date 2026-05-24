@@ -4,6 +4,7 @@ const { protect, protectDriver } = require('../middleware/auth');
 const logger = require('../utils/logger');
 const { asyncHandler } = require('../utils/errorHandler');
 const { bookingLimiter } = require('../utils/rateLimiter');
+const crypto = require('crypto');
 
 // POST /api/bookings — rider creates a booking
 router.post('/', protect, bookingLimiter, asyncHandler(async (req, res) => {
@@ -32,7 +33,25 @@ router.post('/', protect, bookingLimiter, asyncHandler(async (req, res) => {
     return res.status(400).json({ message: 'Invalid pickup or drop-off coordinates.' });
   }
 
+  // FIX: Verify Razorpay Signature before trusting 'paid' status
+  let isActuallyPaid = !!paid;
+  if (payment === 'Online' && razorpayPaymentId && razorpaySignature) {
+    const secret = process.env.RAZORPAY_KEY_SECRET;
+    if (secret) {
+      const hmac = crypto.createHmac('sha256', secret);
+      hmac.update(razorpayOrderId + "|" + razorpayPaymentId);
+      const generated = hmac.digest('hex');
+      if (generated !== razorpaySignature) {
+        return res.status(400).json({ message: 'Invalid payment signature. Booking rejected.' });
+      }
+    }
+  }
+
   const amount = (fareAmount !== undefined && fareAmount !== null) ? fareAmount : 50;
+  
+  // Ola/Uber Style: Generate a 4-digit OTP for the passenger to give to the driver
+  // This ensures the ride only starts when the passenger is physically present.
+  const startOTP = Math.floor(1000 + Math.random() * 9000).toString();
 
   const booking = await Booking.create({
     userId:      req.user._id,
@@ -46,8 +65,9 @@ router.post('/', protect, bookingLimiter, asyncHandler(async (req, res) => {
     payment: payment || 'Cash',
     distance, duration,
     status: 'searching',
+    startOTP, // Persist OTP
     // Payment tracking
-    paid:              !!paid,
+    paid:              isActuallyPaid,
     razorpayOrderId:   razorpayOrderId   || null,
     razorpayPaymentId: razorpayPaymentId || null,
     razorpaySignature: razorpaySignature || null,
@@ -70,7 +90,13 @@ router.post('/', protect, bookingLimiter, asyncHandler(async (req, res) => {
 
   res.status(201).json({
     message: 'Booking created. Searching for drivers...',
-    booking: { id: booking._id, status: booking.status },
+    booking: { 
+      id:       booking._id, 
+      status:   booking.status,
+      otp:      startOTP, // Return OTP to the rider
+      fare:     amount,
+      currency: 'INR'
+    },
   });
 }));
 
@@ -113,7 +139,15 @@ router.post('/:id/respond', protectDriver, asyncHandler(async (req, res) => {
       if (global.io.activeBookings) {
         global.io.activeBookings.set(String(bookingId), String(req.driver._id));
       }
-      const eventPayload = { action: 'accept', driver: driverPayload };
+      if (global.io.driverToBooking) {
+        global.io.driverToBooking.set(String(req.driver._id), String(bookingId));
+      }
+      // BUG FIX #3: rider needs OTP immediately on accept
+      const eventPayload = { 
+        action: 'accept', 
+        driver: driverPayload,
+        otp:    booking.startOTP 
+      };
       global.io.to(`booking:${bookingId}`).emit(`booking:${bookingId}`, eventPayload);
     }
 
@@ -130,6 +164,17 @@ router.post('/:id/respond', protectDriver, asyncHandler(async (req, res) => {
 
 // PUT /api/bookings/:id/start — driver starts ride after pickup
 router.put('/:id/start', protectDriver, asyncHandler(async (req, res) => {
+  const { otp } = req.body;
+
+  // FIX: Secure OTP Verification
+  const check = await Booking.findById(req.params.id).select('startOTP status driverId');
+  if (!check) return res.status(404).json({ message: 'Booking not found.' });
+
+  if (check.startOTP !== String(otp)) {
+    logger.warn(`Ride start failed: Invalid OTP for booking ${req.params.id}`, { driverId: req.driver._id });
+    return res.status(401).json({ message: 'Invalid OTP. Please ask the passenger for the 4-digit PIN.' });
+  }
+
   const booking = await Booking.findOneAndUpdate(
     { _id: req.params.id, driverId: req.driver._id, status: 'accepted' },
     { status: 'started' },
@@ -137,10 +182,7 @@ router.put('/:id/start', protectDriver, asyncHandler(async (req, res) => {
   );
 
   if (!booking) {
-    // FIX: Return specific error codes so Driver.jsx can handle each case.
-    // Previously all failures returned 404 "cannot be started" — driver had
-    // no way to distinguish "stale ride" from "already started" from "wrong driver".
-    const exists = await Booking.findById(req.params.id).select('status driverId').lean();
+    const exists = check;
     if (!exists) {
       return res.status(404).json({ message: 'Booking not found.', code: 'NOT_FOUND' });
     }
@@ -201,6 +243,7 @@ router.put('/:id/complete', protectDriver, asyncHandler(async (req, res) => {
     logger.info(`Emitting completed for booking ${req.params.id}`, { driverId: req.driver._id });
     global.io.to(`booking:${req.params.id}`).emit(`booking:${req.params.id}`, payload);
     global.io.activeBookings?.delete(String(req.params.id));
+    global.io.driverToBooking?.delete(String(req.driver._id));
   }
 
   res.json({ message: 'Ride completed.', fareAmount: booking.fareAmount });
@@ -226,6 +269,7 @@ router.put('/:id/cancel', protectDriver, asyncHandler(async (req, res) => {
     logger.info(`Emitting cancelled for booking ${req.params.id}`, { driverId: req.driver._id });
     global.io.to(`booking:${req.params.id}`).emit(`booking:${req.params.id}`, payload);
     global.io.activeBookings?.delete(String(req.params.id));
+    global.io.driverToBooking?.delete(String(req.driver._id));
   }
 
   logger.info(`Driver cancelled booking: ${req.params.id}`, { driverId: req.driver._id });
@@ -281,6 +325,9 @@ router.delete('/:id', protect, asyncHandler(async (req, res) => {
   if (global.io) {
     if (global.io.activeBookings) {
       global.io.activeBookings.delete(String(req.params.id));
+    }
+    if (booking.driverId && global.io.driverToBooking) {
+      global.io.driverToBooking.delete(String(booking.driverId));
     }
     global.io.to(`booking:${req.params.id}`).emit(`booking:${req.params.id}`, { action: 'cancelled' });
 

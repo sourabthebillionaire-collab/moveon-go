@@ -15,6 +15,10 @@ const SOCKET_URL = (() => {
     return 'http://localhost:3001';
   }
   // Fallback to the current origin for production (Vercel/Heroku unified domain)
+  if (import.meta.env.PROD) {
+    console.warn('[Socket] VITE_SOCKET_URL not found. Falling back to window origin. ' +
+                 'Note: WebSockets will fail if hosted on Vercel without a dedicated backend URL.');
+  }
   return window.location.origin;
 })();
 

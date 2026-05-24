@@ -59,7 +59,7 @@ export default function DriverRegister() {
     1: () => {
       if (!form.name.trim())  return 'Full name is required.';
       if (!form.phone.trim()) return 'Phone number is required.';
-      if (form.phone.replace(/\D/g,'').length < 10) return 'Enter a valid 10-digit phone number.';
+      if (form.phone.replace(/[^0-9+]/g,'').replace(/\D/g,'').length < 10) return 'Enter a valid 10-digit phone number.';
       return null;
     },
     2: () => {
@@ -96,7 +96,7 @@ export default function DriverRegister() {
     setLoading(true); setError('');
     try {
       const data = await api.driverRegister({
-        name:          form.name.trim(),
+        name:          form.name.trim(), // Name is already trimmed
         phone:         form.phone.trim(),
         email:         form.email.trim(),
         address:       form.address.trim(),
@@ -112,8 +112,8 @@ export default function DriverRegister() {
       
       setResult(data);
       setStep(4);
-    } catch {
-      setError('Cannot connect to server. Please check your connection.');
+    } catch (err) {
+      setError(err.data?.message || err.message || 'Registration failed. Please check your connection.');
     } finally { setLoading(false); }
   };
 

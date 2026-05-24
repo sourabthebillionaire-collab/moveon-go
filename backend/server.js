@@ -26,7 +26,7 @@ requiredEnvVars.forEach((envVar) => {
 });
 
 const app    = express();
-app.set('trust proxy', 1); // Trusting the first proxy (Heroku/Render/AWS) for correct rate limiting
+app.set('trust proxy', 1); // Ensure rate limiting works correctly on Cloud/Heroku
 
 const server = http.createServer(app);
 
@@ -72,8 +72,8 @@ require('./socket/index')(io);
 
 // ── Global Middleware ─────────────────────────────────────────
 app.use(helmet({ crossOriginEmbedderPolicy: false }));
-app.use(mongoSanitize()); // Prevent NoSQL injection
-app.use(compression());   // Compress all responses for faster loading
+app.use(mongoSanitize()); // Prevent NoSQL Injection
+app.use(compression());   // Improve performance via response compression
 app.use(cors(corsOptions));
 logger.info('CORS and Socket.io initialized with whitelist:', { 
   primary: rawFrontendUrl || 'Default Localhost',
@@ -85,7 +85,9 @@ app.use(morgan('combined', { stream: { write: (msg) => logger.info(msg.trim()) }
 
 // ── Rate Limiting ─────────────────────────────────────────────
 app.use('/api/', apiLimiter);
-app.use('/api/auth/login', authLimiter);
+app.use('/api/auth/login',     authLimiter);
+app.use('/api/admin/login',    authLimiter); // BUG FIX #6: Protect admin login
+app.use('/api/driver/register', authLimiter); // FIX: Prevent driver registration spam
 logger.info('Rate limiting enabled on all API routes');
 
 // ── Routes ────────────────────────────────────────────────────
@@ -115,13 +117,12 @@ const path = require('path');
 const frontendBuildPath = path.join(__dirname, '../frontend/dist');
 
 // Serve static assets (JS, CSS, images, etc.)
-app.use(express.static(frontendBuildPath, {
-  maxAge: '1d',     // Cache assets for 24 hours
-  etag: true,       // Use ETags for version checking
-  index: false      // Prevent serving index twice
-}));
+app.use(express.static(frontendBuildPath));
 
+// For any non-API request that doesn't match a real file, serve index.html
+// This enables React Router to handle client-side routing
 app.get('*', (req, res, next) => {
+  // Skip if this is an API request (it will hit the 404 handler below)
   if (req.path.startsWith('/api/') || req.path === '/health') {
     return next();
   }
@@ -129,12 +130,8 @@ app.get('*', (req, res, next) => {
   const indexPath = path.join(frontendBuildPath, 'index.html');
   res.sendFile(indexPath, (err) => {
     if (err) {
-      // FIX: Better error handling for missing build folder
-      if (!res.headersSent) {
-        res.status(500).send('Frontend build not found. Run npm run build.');
-      }
       logger.warn(`Failed to serve frontend: ${err.message}`);
-      return;
+      next();
     }
   });
 });

@@ -1,6 +1,7 @@
 /**
  * Geocoding — OpenStreetMap Nominatim
- * No API key required. Rate limit: 1 req/sec (debounce in UI).
+ * PRODUCTION NOTE: At 5k users/day, you MUST replace this with 
+ * Google Maps or Mapbox. Nominatim will rate-limit you.
  */
 
 const BASE = 'https://nominatim.openstreetmap.org';
@@ -8,10 +9,19 @@ const HEADERS = { 'Accept-Language': 'en', 'User-Agent': 'MoveOnGo/1.0' };
 
 export async function searchPlaces(query, limit = 6) {
   if (!query || query.trim().length < 2) return [];
+  
+  // Scalability Fix: Ensure we don't spam the service
+  await new Promise(r => setTimeout(r, 200)); 
+
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+
     const p = new URLSearchParams({ q: query, format: 'json', limit: String(limit), addressdetails: '1', countrycodes: 'in' });
-    const res = await fetch(`${BASE}/search?${p}`, { headers: HEADERS });
+    const res = await fetch(`${BASE}/search?${p}`, { headers: HEADERS, signal: controller.signal });
     const data = await res.json();
+    clearTimeout(timeoutId);
+
     return data.map(d => ({
       id:       d.place_id,
       name:     shortName(d),

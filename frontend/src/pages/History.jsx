@@ -65,8 +65,9 @@ export default function History() {
       setError('');
       try {
         const token = getToken();
-        if (!token) { setError('Please sign in to view history.'); setLoading(false); return; }
-        const data = await api.getBookings(token);
+        // FIX: Ensure loading is stopped even on early exit
+        if (!token) { setError('Please sign in to view history.'); return; } 
+        const data = await api.getBookings(token); // FIX: Ensure API call is awaited
         setBookings(data.bookings || []);
       } catch {
         setError('Could not load trip history. Check your connection.');

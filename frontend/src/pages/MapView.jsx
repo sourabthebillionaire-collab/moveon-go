@@ -4,7 +4,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import Header from '../components/Header';
 import BottomNav from '../components/BottomNav';
-import { getCurrentPosition } from '../services/geocoding';
+import { watchPosition } from '../services/geocoding';
 import { getRoute, fmtDist, fmtDuration } from '../services/routing';
 import { connectSocket, getSocket, onVehiclesSnapshot, onVehiclesUpdate, onDriverOffline } from '../services/socket';
 import api from '../services/api';
@@ -18,13 +18,14 @@ L.Icon.Default.mergeOptions({
   shadowUrl:     'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
 });
 
-function vehicleIcon(type) {
+function vehicleIcon(v) {
   const colors = { bus: '#1565C0', auto: '#E6A800', cab: '#1565C0', bike: '#6D28D9' };
-  const labels = { bus: 'BUS', auto: 'AUTO', cab: 'CAB', bike: 'BIKE' };
-  const bg = colors[type] || colors.bus;
+  const bg = colors[v.type] || colors.bus;
+  // FIX: Show route number on marker for buses, otherwise vehicle type
+  const label = (v.type === 'bus' && v.routeNumber) ? v.routeNumber : (v.type || 'VEH').toUpperCase();
   return L.divIcon({
     className: '',
-    html: `<div style="background:${bg};color:#fff;font-size:10px;font-weight:700;padding:4px 8px;border-radius:6px;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.25);font-family:Inter,sans-serif;border:1.5px solid rgba(255,255,255,0.3)">${labels[type]||'VEH'}</div>`,
+    html: `<div style="background:${bg};color:#fff;font-size:10px;font-weight:700;padding:4px 8px;border-radius:6px;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.25);font-family:Inter,sans-serif;border:1.5px solid rgba(255,255,255,0.3)">${label}</div>`,
     iconAnchor: [22, 14], popupAnchor: [0, -16],
   });
 }
@@ -42,6 +43,7 @@ export default function MapView() {
   const mapInst     = useRef(null);
   const markersRef  = useRef({});
   const routeRef    = useRef(null);
+  const timestampsRef = useRef({}); // FIX: Track data freshness per vehicle
   const userMkrRef  = useRef(null);
 
   const [vehicles,    setVehicles]    = useState([]);
@@ -68,20 +70,19 @@ export default function MapView() {
 
   // Get user GPS
   useEffect(() => {
-    (async () => {
-      try {
-        const pos = await getCurrentPosition();
-        setUserPos(pos);
-        const map = mapInst.current;
-        if (!map) return;
-        if (userMkrRef.current) userMkrRef.current.setLatLng([pos.lat, pos.lng]);
-        else {
-          userMkrRef.current = L.marker([pos.lat, pos.lng], { icon: userIcon(), zIndexOffset: 1000 })
-            .bindPopup('<b>You are here</b>').addTo(map);
-        }
+    const unsub = watchPosition(pos => {
+      setUserPos(pos);
+      const map = mapInst.current;
+      if (!map) return;
+      if (userMkrRef.current) {
+        userMkrRef.current.setLatLng([pos.lat, pos.lng]);
+      } else {
+        userMkrRef.current = L.marker([pos.lat, pos.lng], { icon: userIcon(), zIndexOffset: 1000 })
+          .bindPopup('<b>You are here</b>').addTo(map);
         map.setView([pos.lat, pos.lng], 14);
-      } catch {}
-    })();
+      }
+    });
+    return () => unsub();
   }, []);
 
   // Fetch nearby vehicles from backend (REST fallback)
@@ -103,6 +104,16 @@ export default function MapView() {
     const interval = setInterval(fetchVehicles, 10000);
     return () => clearInterval(interval);
   }, [userPos, filter]);
+
+  // FIX: Clear markers that don't match the new filter
+  useEffect(() => {
+    Object.entries(markersRef.current).forEach(([id, marker]) => {
+      const vehicle = vehicles.find(v => String(v.id) === id);
+      if (filter !== 'all' && vehicle && vehicle.type !== filter) {
+        mapInst.current?.removeLayer(marker);
+      }
+    });
+  }, [filter]);
 
   // ── Real-time socket updates ──────────────────────────────────
   useEffect(() => {
@@ -129,7 +140,10 @@ export default function MapView() {
 
     // ✅ Single vehicle live update — backend emits one vehicle at a time
     const unsubUpdate = onVehiclesUpdate((vehicle) => {
-      addOrUpdateMarker(vehicle);
+      // FIX: Only draw if it matches current filter
+      if (filter === 'all' || vehicle.type === filter) {
+        addOrUpdateMarker(vehicle);
+      }
       setVehicles(prev => {
         const exists = prev.find(v => v.id === vehicle.id);
         if (exists) return prev.map(v => v.id === vehicle.id ? { ...v, ...vehicle } : v);
@@ -141,9 +155,11 @@ export default function MapView() {
     const unsubOffline = onDriverOffline(({ driverId }) => {
       const id = String(driverId);
       const map = mapInst.current;
-      if (markersRef.current[id] && map) {
+      if (markersRef.current[id]) {
+        // BUG FIX #5: Full cleanup of marker references
         map.removeLayer(markersRef.current[id]);
         delete markersRef.current[id];
+        delete timestampsRef.current[id];
       }
       setVehicles(prev => prev.filter(v => String(v.id) !== id));
       setSelected(s => s && String(s.id) === id ? null : s);
@@ -155,13 +171,32 @@ export default function MapView() {
       unsubUpdate();
       unsubOffline();
     };
-  }, []);
+  }, [filter]); // Re-bind so listener has access to latest filter state
+
+  // FIX: Auto-focus vehicle from navigation state (e.g. when coming from Bus List)
+  useEffect(() => {
+    if (vehicles.length > 0 && routeState.busId) {
+      const target = vehicles.find(v => String(v.id) === String(routeState.busId));
+      if (target) {
+        focusVehicle(target);
+        // Clear navigation state so it doesn't keep re-focusing on every data update
+        navigate(location.pathname, { replace: true, state: { ...routeState, busId: null } });
+      }
+    }
+  }, [vehicles, routeState.busId]);
 
   function addOrUpdateMarker(v) {
     const map = mapInst.current;
     if (!map || !v.lat || !v.lng) return;
     const id = String(v.id);
     const existing = markersRef.current[id];
+    
+    // FIX: Freshness Check. Only update if data is newer than current marker
+    const lastTs = timestampsRef.current[id] || 0;
+    const newTs  = v.ts || Date.now();
+    if (newTs < lastTs) return; 
+    timestampsRef.current[id] = newTs;
+
     if (existing) {
       // FIX #18: Add tiny jitter to prevent perfect marker overlap at depots
       const jitter = (Math.random() - 0.5) * 0.0001;
@@ -178,8 +213,8 @@ export default function MapView() {
   }
 
   function buildPopup(v) {
-    const isBus   = v.type === 'bus';
-    const title   = isBus && v.busName ? v.busName : (v.vehicleNumber || v.number || '');
+    const isBus   = v.type === 'bus'; // FIX: Ensure v.number is not used as it's not consistently provided by API
+    const title   = isBus && v.busName ? v.busName : (v.vehicleNumber || '');
     const route   = isBus && v.routeFrom && v.routeTo ? `${v.routeFrom} → ${v.routeTo}` : (v.from && v.to ? `${v.from} → ${v.to}` : '');
     const routeNo = isBus && v.routeNumber ? `Route ${v.routeNumber} · ` : '';
 
@@ -198,8 +233,13 @@ export default function MapView() {
     const map = mapInst.current;
     if (map) map.flyTo([v.lat, v.lng], 15, { duration: 1 });
 
-    const from = userPos || { lat: 20.296, lng: 85.824 };
-    const route = await getRoute(from, { lat: v.lat, lng: v.lng });
+    if (!userPos) {
+      alert('Still detecting your location. Please wait a moment...');
+      setLoadRoute(false);
+      return;
+    }
+
+    const route = await getRoute(userPos, { lat: v.lat, lng: v.lng });
 
     if (route && map) {
       if (routeRef.current) map.removeLayer(routeRef.current);
@@ -207,7 +247,7 @@ export default function MapView() {
         color: '#1565C0', weight: 4, opacity: 0.8,
         lineJoin: 'round', lineCap: 'round',
       }).addTo(map);
-      map.fitBounds(L.latLngBounds([[from.lat, from.lng], [v.lat, v.lng]]).pad(0.2));
+      map.fitBounds(L.latLngBounds([[userPos.lat, userPos.lng], [v.lat, v.lng]]).pad(0.2));
       setRouteInfo(route);
     }
     markersRef.current[String(v.id)]?.openPopup();

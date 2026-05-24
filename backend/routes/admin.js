@@ -96,7 +96,7 @@ router.get('/drivers', adminAuth, asyncHandler(async (req, res) => {
 router.put('/drivers/:id/approve', adminAuth, asyncHandler(async (req, res) => {
     const driver = await Driver.findByIdAndUpdate(
       req.params.id,
-      { isApproved: true },
+      { isApproved: true, isActive: true },
       { new: true }
     ).select('-pinHash');
 
@@ -122,9 +122,27 @@ router.put('/drivers/:id/reject', adminAuth, asyncHandler(async (req, res) => {
 
     // ✅ Kick driver off active session immediately
     if (global.io) {
+      // FIX: Notify rider if driver was on a trip
+      if (global.io.driverToBooking) {
+        const bookingId = global.io.driverToBooking.get(String(req.params.id));
+        if (bookingId) {
+            const room = `booking:${bookingId}`;
+            global.io.to(room).emit(room, {
+              action: 'cancelled',
+              message: 'Your ride was cancelled due to a driver account issue.'
+            });
+            global.io.in(room).socketsLeave(room);
+            global.io.activeBookings.delete(bookingId);
+            global.io.driverToBooking.delete(String(req.params.id));
+            logger.info(`Admin rejected driver ${req.params.id} — aborted active booking ${bookingId}`);
+      }
+    }
+
       global.io.to(`driver:${req.params.id}`).emit('driver:kicked', {
         reason: reason || 'Your account has been rejected by admin.',
       });
+      // FIX: Force socket to leave room
+      global.io.in(`driver:${req.params.id}`).socketsLeave(`driver:${req.params.id}`);
     }
 
     res.json({ message: `Driver ${driver.name} rejected.`, driver });
@@ -138,9 +156,28 @@ router.delete('/drivers/:id', adminAuth, asyncHandler(async (req, res) => {
     // ✅ Emit kick event to that driver's socket room instantly
     // Driver.jsx listens for this and clears session + redirects to login
     if (global.io) {
-      global.io.to(`driver:${req.params.id}`).emit('driver:kicked', {
+      const driverRoom = `driver:${req.params.id}`;
+      // FIX: Notify rider if driver was on a trip
+      if (global.io.driverToBooking) {
+        const bookingId = global.io.driverToBooking.get(String(req.params.id));
+        if (bookingId) {
+            const room = `booking:${bookingId}`;
+            global.io.to(room).emit(room, {
+              action: 'cancelled',
+              message: 'Your driver is no longer available.'
+            });
+            global.io.in(room).socketsLeave(room);
+            global.io.activeBookings.delete(bookingId);
+            global.io.driverToBooking.delete(String(req.params.id));
+            logger.info(`Admin deleted driver ${req.params.id} — aborted active booking ${bookingId}`);
+      }
+    }
+
+      global.io.to(driverRoom).emit('driver:kicked', {
         reason: 'Your account has been removed by admin.',
       });
+      // FIX: Force socket to leave room to prevent memory bloat
+      global.io.in(driverRoom).socketsLeave(driverRoom);
     }
 
     res.json({ message: `Driver ${driver.name} deleted.` });

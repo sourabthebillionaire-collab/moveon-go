@@ -41,6 +41,9 @@ router.post('/:rideId/respond', protectDriver, asyncHandler(async (req, res) => 
         if (global.io.activeBookings) {
           global.io.activeBookings.set(String(rideId), String(req.driver._id));
         }
+        if (global.io.driverToBooking) {
+          global.io.driverToBooking.set(String(req.driver._id), String(rideId));
+        }
         const eventPayload = { action: 'accept', driver: driverPayload };
         global.io.to(`booking:${rideId}`).emit(`booking:${rideId}`, eventPayload);
       }

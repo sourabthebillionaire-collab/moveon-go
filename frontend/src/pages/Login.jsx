@@ -23,7 +23,7 @@ export default function Login() {
     e.preventDefault();
     setError('');
 
-    const cleanPhone = phone.trim().replace(/\s/g, '');
+    const cleanPhone = phone.trim().replace(/[^0-9+]/g, ''); // Ensure consistent phone number format
     if (!cleanPhone) {
       setError('Please enter your phone number.');
       return;

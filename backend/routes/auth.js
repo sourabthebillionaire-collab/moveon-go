@@ -34,13 +34,15 @@ router.post('/login', authLimiter, asyncHandler(async (req, res) => {
     });
     logger.info(`New user registered: ${normalizedPhone}`);
   } else {
-    const update = { lastLogin: new Date() };
-    if (name && !user.name) {
-      update.name = name.trim();
-      user.name = update.name;
+    const updateData = { lastLogin: new Date() };
+    // FIX: Update name if provided and user currently has no name,
+    // ensuring the greeting (Bug #2) works immediately upon login.
+    if (name?.trim() && !user.name) {
+      updateData.name = name.trim();
+      user.name = updateData.name;
     }
-    await User.updateOne({ _id: user._id }, update);
-    logger.info(`User login: ${normalizedPhone}`);
+    await User.updateOne({ _id: user._id }, updateData);
+    logger.info(`User login: ${normalizedPhone}`, { name: user.name });
   }
 
   // Generate JWT token

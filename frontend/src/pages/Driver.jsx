@@ -199,6 +199,7 @@ export default function Driver() {
   const unwatchRef   = useRef(null);
   const pingRef      = useRef(null);
   const gpsPosRef    = useRef(null); // keep GPS pos accessible in interval closure
+  const lastEmitRef  = useRef(0);    // FIX: Throttle redundant emissions
 
   const t = T[lang];
 
@@ -241,6 +242,8 @@ export default function Driver() {
         if (profile?.driver) {
           setDriver(profile.driver);
           setDriverSession(profile.driver, token);
+          // BUG FIX #9: Sync duty state from DB on restore
+          setOnDuty(!!profile.driver.onDuty);
         }
 
         // FIX: Verify stored ride is still live in DB before restoring it.
@@ -384,6 +387,7 @@ export default function Driver() {
       routeFrom:     driver?.routeFrom   || '',
       routeTo:       driver?.routeTo     || '',
       routeNumber:   driver?.routeNumber || '',
+      capacity:      driver?.vehicleType === 'bus' ? 60 : 1,
     };
 
     unwatchRef.current = watchPosition(pos => {
@@ -391,13 +395,20 @@ export default function Driver() {
       setGpsError(false);
       gpsPosRef.current = pos;
       setSpeed(Math.round((pos.speed || 0) * 3.6));
-      emitLocation({
-        ...basePayload,
-        lat: pos.lat, lng: pos.lng,
-        bearing: pos.bearing || 0,
-        speed: Math.round((pos.speed || 0) * 3.6),
-        status: activeRide ? 'busy' : 'active',
-      });
+      
+      // FIX: Only emit if significantly moved or 5s passed
+      const now = Date.now();
+      if (now - lastEmitRef.current > 5000) {
+        lastEmitRef.current = now;
+        emitLocation({
+          ...basePayload,
+          lat: pos.lat, lng: pos.lng,
+          bearing: pos.bearing || 0,
+          speed: Math.round((pos.speed || 0) * 3.6),
+          status: activeRide ? 'busy' : 'active',
+          passengers, // Now emitted live
+        });
+      }
     }, () => {
       setGpsError(true);
     });
@@ -414,8 +425,10 @@ export default function Driver() {
 
   // ── Panel: end duty ─────────────────────────────────────────
   const endDuty = async () => {
-    if (activeRide) {
-      alert('Please complete or cancel the active ride before going off duty.');
+    if (activeRide || rideReq) {
+      alert(activeRide 
+        ? 'Please complete or cancel the active ride before going off duty.' 
+        : 'Please respond to the pending ride request first.');
       return;
     }
     if (!window.confirm(t.confirmEnd)) return;
@@ -434,7 +447,7 @@ export default function Driver() {
     if (!onDuty) return;
     const unsub = onRideRequest(req => {
       // Suppress new ride requests if driver already has an active ride
-      if (activeRide) return;
+      if (activeRide && ['accepted', 'started'].includes(activeRide.status)) return; // FIX: Check activeRide status
       setRideReq(req);
       speak(
         lang === 'hi' ? 'नई बुकिंग आई है।' :
@@ -476,7 +489,7 @@ export default function Driver() {
     //      'ride:cancelled' (broadcast) for searching-state cancels.
     //      This handler picks that up.
     const handleBookingCancelled = ({ bookingId }) => {
-      if (!activeRide) return;
+      if (!activeRide || !bookingId) return; // FIX: Ensure activeRide and bookingId exist
       if (String(bookingId) !== String(activeRide.id)) return;
       clearActiveDriverRide();
       setActiveRide(null);
@@ -499,7 +512,7 @@ export default function Driver() {
     // Handle rider cancellation DURING searching phase.
     // The fixed bookings.js now emits 'ride:cancelled' (broadcast)
     // when no driver is assigned yet. This dismisses the ride request
-    // card so the driver doesn't try to accept an already-cancelled ride.
+    // card so the driver doesn't try to accept an already cancelled ride.
     const handleRideCancelled = ({ bookingId, id }) => {
       const cancelledId = bookingId || id;
       if (!cancelledId) return;
@@ -514,7 +527,7 @@ export default function Driver() {
         return prev;
       });
       // Also clear active ride if driver somehow accepted it simultaneously
-      setActiveRide(prev => {
+      setActiveRide(prev => { // FIX: Clear active ride if it matches the cancelled ID
         if (prev && String(prev.id) === String(cancelledId)) {
           clearActiveDriverRide();
           setTripActive(false);
@@ -545,7 +558,8 @@ export default function Driver() {
   // was firing simultaneously and overwriting the driver info with { action }
   // only — that was the race condition causing the 60s wait on the rider side.
   const acceptRide = async () => {
-    if (!rideReq) return;
+    if (!rideReq || busy) return;
+    setBusy(true); // Prevent double-taps
     try {
       await api.respondToRide(rideReq.id, 'accept', getDriverToken());
       // ✅ Driver accepted the booking, but pickup hasn't happened yet.
@@ -582,15 +596,21 @@ export default function Driver() {
     }
   };
 
-  const startRide = async () => {
+  const startRide = async (providedOtp) => {
     if (!activeRide) return;
+
+    // Prompt driver for the 4-digit PIN provided by the rider
+    const otp = providedOtp || window.prompt(lang === 'hi' ? 'यात्री से 4 अंकों का पिन मांगें:' : lang === 'or' ? 'ଯାତ୍ରୀଙ୍କୁ 4 ଅଙ୍କ ବିଶିଷ୍ଟ ପିନ୍ ମାଗନ୍ତୁ:' : 'Ask passenger for the 4-digit START PIN:');
+    if (!otp) return;
+
     try {
-      await api.startRide(activeRide.id, getDriverToken());
+      await api.startRide(activeRide.id, otp, getDriverToken());
+      // FIX: Only update local state AFTER successful backend verification
       const startedRide = { ...activeRide, status: 'started' };
       setTripActive(true);
       setActiveRide(startedRide);
       setActiveDriverRide(startedRide);
-      setPassengers(p => p + 1);
+      setPassengers(prev => prev + 1);
       speak(
         lang === 'hi' ? 'यात्रा शुरू।' :
         lang === 'or' ? 'ଯାତ୍ରା ଆରମ୍ଭ।' :
@@ -697,8 +717,8 @@ export default function Driver() {
   };
 
   // ── Sign out ─────────────────────────────────────────────────
-  const signOut = () => {
-    endDuty().catch(() => {});
+  const signOut = async () => {
+    if (onDuty) await endDuty();
     clearDriverSession();
     clearActiveDriverRide();
     setDriver(null);
@@ -930,6 +950,15 @@ export default function Driver() {
                 <div style={{fontSize:14,fontWeight:700}}>{activeRide.distance || '--'}</div>
               </div>
             </div>
+          </div>
+
+          <div style={{display:'flex', gap: 8, marginTop: 12}}>
+            <button 
+              className="btn btn--secondary btn--full" 
+              onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&destination=${activeRide.status === 'started' ? activeRide.dropoffLat : activeRide.pickupLat},${activeRide.status === 'started' ? activeRide.dropoffLng : activeRide.pickupLng}&travelmode=driving`)}
+            >
+              🗺️ {activeRide.status === 'started' ? 'Navigate to Drop' : 'Navigate to Pickup'}
+            </button>
           </div>
         )}
 
