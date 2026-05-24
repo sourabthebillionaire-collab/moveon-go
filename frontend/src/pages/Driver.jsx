@@ -213,16 +213,17 @@ export default function Driver() {
       try {
         const socket = connectSocket();
         const driverId = saved.id || saved._id;
+        const vehicleType = saved.vehicleType;
 
         if (socket.connected) {
-          socket.emit('driver:register', { driverId });
+          socket.emit('driver:register', { driverId, vehicleType });
         }
 
         // FIX #11: Re-register on every reconnect so driver stays in their
         // personal room through socket disconnects. Previously registered once
         // on mount — after any reconnect the driver missed kicked/offline events.
         const handleReconnect = () => {
-          socket.emit('driver:register', { driverId });
+          socket.emit('driver:register', { driverId, vehicleType });
           console.log('[Driver] Re-registered after reconnect');
         };
         socket.on('connect', handleReconnect);
@@ -265,6 +266,10 @@ export default function Driver() {
                 distance:   liveBooking.distance,
                 duration:   liveBooking.duration,
                 type:       liveBooking.vehicleType,
+                pickupLat:  liveBooking.pickupLat,
+                pickupLng:  liveBooking.pickupLng,
+                dropoffLat: liveBooking.dropoffLat,
+                dropoffLng: liveBooking.dropoffLng,
               };
               setActiveRide(verifiedRide);
               setActiveDriverRide(verifiedRide);
@@ -372,10 +377,11 @@ export default function Driver() {
     // the socket was disconnected so emitLocation and ride requests stopped.
     const socket = connectSocket();
     const driverId = driver?.id || driver?._id;
+    const vehicleType = driver?.vehicleType;
     if (socket.connected) {
-      socket.emit('driver:register', { driverId });
+      socket.emit('driver:register', { driverId, vehicleType });
     } else {
-      socket.once('connect', () => socket.emit('driver:register', { driverId }));
+      socket.once('connect', () => socket.emit('driver:register', { driverId, vehicleType }));
     }
 
     const basePayload = {
@@ -699,7 +705,17 @@ export default function Driver() {
       );
     } catch (err) {
       console.error('[Driver] Failed to cancel active ride:', err);
-      alert('Failed to cancel the ride. Please try again.');
+      // FIX: Handle stale/already-cancelled rides gracefully by clearing local state
+      if (err.status === 404 || err.status === 409 || err.status === 403) {
+        setTripActive(false);
+        setActiveRide(null);
+        clearActiveDriverRide();
+        setUserLocation(null);
+        setPassengers(0);
+        alert(err.message || 'This ride is no longer available.');
+      } else {
+        alert('Failed to cancel the ride. Please check your connection and try again.');
+      }
     }
   };
 
@@ -1010,6 +1026,31 @@ export default function Driver() {
               <button className="btn btn--danger" style={{flex:1,minWidth:120}} onClick={cancelActiveRide}>
                 Cancel ride
               </button>
+            </div>
+          </div>
+        )}
+
+        {/* ✅ BUS UTILITY: Manual passenger counter for bus operators */}
+        {onDuty && driver?.vehicleType === 'bus' && (
+          <div style={{padding:'0 16px', marginTop: 12}}>
+            <div className="card" style={{padding: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between'}}>
+              <div>
+                <div style={{fontSize: 13, fontWeight: 700, color: 'var(--gray-900)'}}>Passenger Load</div>
+                <div style={{fontSize: 12, color: 'var(--gray-400)'}}>Update count for riders</div>
+              </div>
+              <div style={{display: 'flex', alignItems: 'center', gap: 16}}>
+                <button 
+                  className="btn btn--secondary" 
+                  style={{width: 40, height: 40, borderRadius: '50%', padding: 0}}
+                  onClick={() => setPassengers(p => Math.max(0, p - 5))}
+                >—</button>
+                <strong style={{fontSize: 20, minWidth: 30, textAlign: 'center'}}>{passengers}</strong>
+                <button 
+                  className="btn btn--secondary" 
+                  style={{width: 40, height: 40, borderRadius: '50%', padding: 0}}
+                  onClick={() => setPassengers(p => Math.min(60, p + 5))}
+                >+</button>
+              </div>
             </div>
           </div>
         )}

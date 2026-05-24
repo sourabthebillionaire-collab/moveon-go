@@ -7,7 +7,7 @@ import PlaceSearch from '../components/PlaceSearch';
 import { getCurrentPosition, reverseGeocode, watchPosition } from '../services/geocoding';
 import { getRoute, calcFare, fmtDist, fmtDuration } from '../services/routing';
 import api from '../services/api';
-import { connectSocket, getSocket, emitRiderLocation } from '../services/socket';
+import { connectSocket, getSocket, emitRiderLocation, joinBookingRoom } from '../services/socket';
 import { addBooking, getToken, getActiveBooking, setActiveBooking, clearActiveBooking } from '../services/storage';
 import './BookRide.css';
 
@@ -57,6 +57,7 @@ export default function BookRide() {
   const driverIdRef            = useRef(null);
   const driverLocationRef      = useRef(null);
   const riderLocationWatchRef  = useRef(null);
+  const roomUnsubRef           = useRef(null);
   const timeoutRef             = useRef(null);
   const countdownRef           = useRef(null);
 
@@ -173,13 +174,8 @@ const storedBooking = getActiveBooking();
 
       // Re-establish socket listeners
         const socket = connectSocket();
-        if (socket.connected) {
-          socket.emit('rider:joinBooking', { bookingId: activeBooking._id });
-        } else {
-          socket.once('connect', () => {
-            socket.emit('rider:joinBooking', { bookingId: activeBooking._id });
-          });
-        }
+        if (roomUnsubRef.current) roomUnsubRef.current();
+        roomUnsubRef.current = joinBookingRoom(activeBooking._id);
 
         // Attach booking and driver-location listeners so we receive later events
         const bookingEvent = `booking:${activeBooking._id}`;
@@ -327,6 +323,10 @@ const storedBooking = getActiveBooking();
         riderLocationWatchRef.current();
         riderLocationWatchRef.current = null;
       }
+      if (roomUnsubRef.current) {
+        roomUnsubRef.current();
+        roomUnsubRef.current = null;
+      }
       const socket = getSocket();
       if (socket && bookingId) {
         socket.off(`booking:${bookingId}`);
@@ -369,13 +369,9 @@ const storedBooking = getActiveBooking();
       });
       const socket = connectSocket();
 
-      // ✅ JOIN the booking room so backend can target this socket.
-      // If the socket is not yet connected, wait until it is.
-      if (socket.connected) {
-        socket.emit('rider:joinBooking', { bookingId: b.id });
-      } else {
-        socket.once('connect', () => socket.emit('rider:joinBooking', { bookingId: b.id }));
-      }
+      // ✅ Use the resilient joinBookingRoom helper (re-joins on reconnect)
+      if (roomUnsubRef.current) roomUnsubRef.current();
+      roomUnsubRef.current = joinBookingRoom(b.id);
 
       if (riderLocationWatchRef.current) {
         riderLocationWatchRef.current();

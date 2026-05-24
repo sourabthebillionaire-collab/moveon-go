@@ -33,17 +33,20 @@ router.post('/', protect, bookingLimiter, asyncHandler(async (req, res) => {
     return res.status(400).json({ message: 'Invalid pickup or drop-off coordinates.' });
   }
 
-  // FIX: Verify Razorpay Signature before trusting 'paid' status
-  let isActuallyPaid = !!paid;
-  if (payment === 'Online' && razorpayPaymentId && razorpaySignature) {
+  // ✅ SECURITY HARDENING: Mandate verification for Online payments
+  let isActuallyPaid = false;
+  if (payment === 'Online') {
+    if (!razorpayPaymentId || !razorpaySignature) {
+      return res.status(400).json({ message: 'Online payment verification failed: Details missing.' });
+    }
     const secret = process.env.RAZORPAY_KEY_SECRET;
-    if (secret) {
-      const hmac = crypto.createHmac('sha256', secret);
-      hmac.update(razorpayOrderId + "|" + razorpayPaymentId);
-      const generated = hmac.digest('hex');
-      if (generated !== razorpaySignature) {
-        return res.status(400).json({ message: 'Invalid payment signature. Booking rejected.' });
-      }
+    const hmac = crypto.createHmac('sha256', secret || '');
+    hmac.update(razorpayOrderId + "|" + razorpayPaymentId);
+    const generated = hmac.digest('hex');
+    if (generated === razorpaySignature) {
+      isActuallyPaid = true;
+    } else {
+      return res.status(400).json({ message: 'Invalid payment signature. Booking rejected.' });
     }
   }
 
@@ -76,7 +79,8 @@ router.post('/', protect, bookingLimiter, asyncHandler(async (req, res) => {
   logger.info(`Booking created: ${booking._id}`, { userId: req.user._id, type, fareAmount: amount });
 
   if (global.io) {
-    global.io.emit('ride:request', {
+    // ✅ PERFORMANCE: Target only drivers of the requested vehicle type
+    global.io.to(`drivers:${type}`).emit('ride:request', {
       id:         booking._id,
       type,       pickup,      dropoff,
       fare,       fareAmount:  amount,

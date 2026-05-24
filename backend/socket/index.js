@@ -62,10 +62,12 @@ module.exports = function initSocket(io) {
     });
 
     // ── Driver: register into their personal room ──────────────
-    socket.on('driver:register', ({ driverId }) => {
+    socket.on('driver:register', ({ driverId, vehicleType }) => {
       if (!driverId) return;
       connectedDrivers.set(socket.id, String(driverId));
       socket.join(`driver:${String(driverId)}`);
+      // ✅ PERFORMANCE: Join a room for their vehicle type for targeted dispatching
+      if (vehicleType) socket.join(`drivers:${vehicleType}`);
       console.log(`[Socket] Driver registered: ${driverId}`);
     });
 

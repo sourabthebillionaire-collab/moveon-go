@@ -44,7 +44,12 @@ router.post('/:rideId/respond', protectDriver, asyncHandler(async (req, res) => 
         if (global.io.driverToBooking) {
           global.io.driverToBooking.set(String(req.driver._id), String(rideId));
         }
-        const eventPayload = { action: 'accept', driver: driverPayload };
+        // BUG FIX: Include OTP in the payload so the rider sees it immediately
+        const eventPayload = { 
+          action: 'accept', 
+          driver: driverPayload,
+          otp:    booking.startOTP 
+        };
         global.io.to(`booking:${rideId}`).emit(`booking:${rideId}`, eventPayload);
       }
     } else {
