@@ -212,10 +212,15 @@ const storedBooking = getActiveBooking();
 
   const setupBookingListeners = (id) => {
         const socket = connectSocket();
-        if (roomUnsubRef.current) roomUnsubRef.current();
-        roomUnsubRef.current = joinBookingRoom(id);
 
-        // BUG FIX: Resume location sharing if session is restored
+        // 1. Cleanup old listeners to prevent memory leaks/duplicates
+        const bookingEvent = `booking:${id}`;
+        socket.off(bookingEvent);
+        if (driverLocationRef.current) {
+          socket.off('driver:locationUpdate', driverLocationRef.current);
+        }
+
+        // 2. Resume location sharing if session is restored
         if (riderLocationWatchRef.current) riderLocationWatchRef.current();
         riderLocationWatchRef.current = watchPosition(pos => {
           emitRiderLocation({ 
@@ -224,8 +229,7 @@ const storedBooking = getActiveBooking();
           });
         });
 
-        // Attach booking and driver-location listeners so we receive later events
-        const bookingEvent = `booking:${id}`;
+        // 3. Attach location handler
         const driverLocationHandler = (data) => {
           if (driverIdRef.current && String(driverIdRef.current) === String(data.driverId)) {
             setDriverLocation({ lat: data.lat, lng: data.lng, bearing: data.bearing, speed: data.speed });
@@ -234,7 +238,7 @@ const storedBooking = getActiveBooking();
         driverLocationRef.current = driverLocationHandler;
         socket.on('driver:locationUpdate', driverLocationHandler);
 
-        socket.off(bookingEvent); // clean old
+        // 4. Attach main booking handler BEFORE joining room
         socket.on(bookingEvent, (data) => {
           setSocketDebug(d => [...d.slice(-9), { t: Date.now(), e: bookingEvent, d: data }]);
           if (data.action === 'accept' && data.driver) {
@@ -243,13 +247,18 @@ const storedBooking = getActiveBooking();
             setDriver(data.driver);
             driverIdRef.current = data.driver.driverId;
             if (data.otp) setOtp(data.otp);
+            
+            // USE INITIAL LOCATION: Don't wait 10s for the first GPS update
+            if (data.location) setDriverLocation(data.location);
+            
             setBooking('found');
+            
             const currentBooking = getActiveBooking();
             setActiveBooking({
               ...(typeof currentBooking === 'object' && currentBooking ? currentBooking : {}),
               status: 'accepted',
-              otp: data.otp,
               driver: data.driver,
+              otp: data.otp,
             });
             stopPolling();
           } else if (data.action === 'started') {
@@ -260,11 +269,25 @@ const storedBooking = getActiveBooking();
           } else if (data.action === 'cancelled') {
             handleBookingTermination('cancelled');
           } else if (data.action === 'driver_arrived') {
-             // Show a toast or notification here
+             alert('Your driver has arrived at the pickup location!');
           } else if (data.action === 'driver_offline') {
             handleBookingTermination('driver_offline');
           }
         });
+
+        // 5. Finally join the room (triggers replay if driver already accepted)
+        if (roomUnsubRef.current) roomUnsubRef.current();
+        roomUnsubRef.current = joinBookingRoom(id);
+
+        // 6. Start the timeout if we are still in searching state after recovery
+        if (booking === 'searching' && !timeoutRef.current) {
+          timeoutRef.current = setTimeout(async () => {
+            socket.off(bookingEvent);
+            try { await api.cancelBooking(id, getToken()); } catch {}
+            clearActiveBooking();
+            setBooking('timeout');
+          }, countdown * 1000);
+        }
   };
 
   // ✅ UBER-STYLE POLLING: self-heal if socket events are missed
@@ -372,18 +395,11 @@ const storedBooking = getActiveBooking();
       });
       const socket = connectSocket();
 
-      // ✅ Use the resilient joinBookingRoom helper (re-joins on reconnect)
-      if (roomUnsubRef.current) roomUnsubRef.current();
-      roomUnsubRef.current = joinBookingRoom(b.id);
-
-      if (riderLocationWatchRef.current) {
-        riderLocationWatchRef.current();
-      }
-      riderLocationWatchRef.current = watchPosition(pos => {
-        emitRiderLocation({ bookingId: b.id, lat: pos.lat, lng: pos.lng, bearing: pos.bearing, speed: pos.speed });
-      });
-
       const bookingEvent = `booking:${b.id}`;
+      
+      // ✅ CRITICAL: Attach listeners BEFORE joining the room to catch replays
+      socket.off(bookingEvent); 
+      
       const driverLocationHandler = ({ driverId, lat, lng, bearing, speed }) => {
         if (driverIdRef.current && String(driverIdRef.current) === String(driverId)) {
           setDriverLocation({ lat, lng, bearing, speed });
@@ -485,6 +501,16 @@ const storedBooking = getActiveBooking();
       };
 
       socket.on(bookingEvent, bookingHandler);
+
+      // ✅ Now join the room safely
+      if (roomUnsubRef.current) roomUnsubRef.current();
+      roomUnsubRef.current = joinBookingRoom(b.id);
+
+      if (riderLocationWatchRef.current) riderLocationWatchRef.current();
+      riderLocationWatchRef.current = watchPosition(pos => {
+        emitRiderLocation({ bookingId: b.id, lat: pos.lat, lng: pos.lng, bearing: pos.bearing, speed: pos.speed });
+      });
+
       countdownRef.current = setInterval(() => {
         setCountdown(prev => { if (prev <= 1) { clearInterval(countdownRef.current); return 0; } return prev - 1; });
       }, 1000);

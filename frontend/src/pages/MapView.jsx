@@ -157,10 +157,10 @@ export default function MapView() {
     // ✅ Remove marker when driver disconnects
     const unsubOffline = onDriverOffline(({ driverId }) => {
       const id = String(driverId);
-      const map = mapInst.current;
       if (markersRef.current[id]) {
-        // BUG FIX #5: Full cleanup of marker references
-        map.removeLayer(markersRef.current[id]);
+        if (mapInst.current) {
+          mapInst.current.removeLayer(markersRef.current[id]);
+        }
         delete markersRef.current[id];
         delete timestampsRef.current[id];
       }

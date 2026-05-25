@@ -33,20 +33,36 @@ module.exports = function initSocket(io) {
     // Called immediately after POST /api/bookings returns a bookingId.
     // If the driver already accepted (race condition), replay the accept event.
     socket.on('rider:joinBooking', async ({ bookingId }) => {
-      if (!bookingId) return;
-      socket.join(`booking:${bookingId}`);
-      console.log(`[Socket] Rider joined room booking:${bookingId}`);
+      const bId = bookingId ? String(bookingId) : null;
+      if (!bId) return;
+      socket.join(`booking:${bId}`);
+      console.log(`[Socket] Rider joined room booking:${bId}`);
 
-      const driverId = activeBookings.get(String(bookingId));
+      // SELF-HEALING: If mapping is lost (e.g. server restart), reconstruct from DB
+      let driverId = activeBookings.get(bId);
+      if (!driverId) {
+        const booking = await Booking.findById(bId).select('driverId status').lean();
+        if (booking && booking.driverId && ['accepted', 'started'].includes(booking.status)) {
+          driverId = String(booking.driverId);
+          activeBookings.set(bId, driverId);
+          driverToBooking.set(driverId, bId);
+        }
+      }
+
       if (driverId) {
-        driverToBooking.set(String(driverId), String(bookingId));
+        const dId = String(driverId);
+        driverToBooking.set(dId, bId);
         const [driver, booking] = await Promise.all([
-          Driver.findById(String(driverId)).select('name phone vehicleNumber vehicleType rating'),
-          Booking.findById(bookingId).select('startOTP')
+          Driver.findById(dId).select('name phone vehicleNumber vehicleType rating').lean(),
+          Booking.findById(bId).select('startOTP status').lean()
         ]);
-        const pos = activeVehiclePositions.get(String(driverId));
-        socket.emit(`booking:${bookingId}`, {
-          action: 'accept',
+
+        const pos = activeVehiclePositions.get(dId);
+        // Replay 'accept' or 'started' based on actual DB state
+        const action = booking?.status === 'started' ? 'started' : 'accept';
+
+        socket.emit(`booking:${bId}`, {
+          action,
           otp:    booking?.startOTP,
           driver: driver ? {
             name:          driver.name,
@@ -64,10 +80,24 @@ module.exports = function initSocket(io) {
     });
 
     // ── Driver: register into their personal room ──────────────
-    socket.on('driver:register', ({ driverId, vehicleType }) => {
+    socket.on('driver:register', async ({ driverId, vehicleType }) => {
       if (!driverId) return;
-      connectedDrivers.set(socket.id, String(driverId));
-      socket.join(`driver:${String(driverId)}`);
+      const dId = String(driverId);
+      connectedDrivers.set(socket.id, dId);
+      socket.join(`driver:${dId}`);
+      
+      // SELF-HEALING: Restore active booking mapping for location tracking
+      const booking = await Booking.findOne({ 
+        driverId: dId, 
+        status: { $in: ['accepted', 'started'] } 
+      }).select('_id').lean();
+      
+      if (booking) {
+        const bId = String(booking._id);
+        driverToBooking.set(dId, bId);
+        activeBookings.set(bId, dId);
+      }
+
       // ✅ PERFORMANCE: Join a room for their vehicle type for targeted dispatching
       if (vehicleType) socket.join(`drivers:${vehicleType}`);
       console.log(`[Socket] Driver registered: ${driverId}`);
@@ -124,13 +154,17 @@ module.exports = function initSocket(io) {
         const bookingData = await Booking.findById(activeBookingId).select('pickupLat pickupLng status');
         if (bookingData && bookingData.status === 'accepted') {
           const dist = getDist(lat, lng, bookingData.pickupLat, bookingData.pickupLng);
-          if (dist < 0.2) {
+          // Prevent spamming the rider with notification on every move
+          if (dist < 0.2 && !io.arrivedNotified?.has(activeBookingId)) {
+            if (!io.arrivedNotified) io.arrivedNotified = new Set();
+            io.arrivedNotified.add(activeBookingId);
+            
             io.to(`booking:${activeBookingId}`).emit(`booking:${activeBookingId}`, { 
               action: 'driver_arrived',
               message: 'Your driver has arrived at the pickup location!' 
             });
+            console.log(`[Socket] Arrived notification sent for booking ${activeBookingId}`);
           }
-          console.log(`[Socket] Driver ${driverId} arrived at booking ${activeBookingId}`);
         }
       }
 
@@ -154,15 +188,17 @@ module.exports = function initSocket(io) {
     // Fallback path for ride respond (HTTP is the primary path).
     // Covers the edge case where the HTTP call fails but socket is alive.
     socket.on('ride:respond', ({ rideId, action, driver }) => {
-      if (!rideId || !action) return;
+      const rId = String(rideId);
+      if (!rId || !action) return;
+      
       if (action === 'accept') {
         const driverId = connectedDrivers.get(socket.id);
         if (driverId) {
-          activeBookings.set(String(rideId), driverId);
-          driverToBooking.set(String(driverId), String(rideId));
+          activeBookings.set(rId, String(driverId));
+          driverToBooking.set(String(driverId), rId);
         }
       }
-      io.to(`booking:${rideId}`).emit(`booking:${rideId}`, {
+      io.to(`booking:${rId}`).emit(`booking:${rId}`, {
         action,
         driver: driver || null,
       });
@@ -187,6 +223,7 @@ module.exports = function initSocket(io) {
       // FIX: Evacuate the room after trip completion
       io.in(roomName).socketsLeave(roomName);
       activeBookings.delete(String(bookingId));
+      io.arrivedNotified?.delete(String(bookingId));
       if (driverId) driverToBooking.delete(String(driverId));
       console.log(`[Socket] trip:ended for booking ${bookingId} — rider notified`);
     });
@@ -210,12 +247,14 @@ module.exports = function initSocket(io) {
         for (const [bookingId, bDriverId] of activeBookings.entries()) {
           if (String(bDriverId) === String(driverId)) {
             // Notify the specific rider — driver went offline
-            io.to(`booking:${bookingId}`).emit(`booking:${bookingId}`, {
+            const bIdStr = String(bookingId);
+            io.to(`booking:${bIdStr}`).emit(`booking:${bIdStr}`, {
               action:    'driver_offline',
-              bookingId: String(bookingId),
+              bookingId: bIdStr,
               driverId:  String(driverId),
             });
             activeBookings.delete(bookingId);
+            driverToBooking.delete(String(driverId));
             console.log(`[Socket] Driver ${driverId} disconnected mid-ride — rider for booking ${bookingId} notified`);
             break;
           }
@@ -255,6 +294,7 @@ module.exports = function initSocket(io) {
               driverId:  String(d._id),
             });
             activeBookings.delete(bookingId);
+            driverToBooking.delete(String(d._id));
             console.log(`[Socket] Stale driver ${d._id} — rider for booking ${bookingId} notified`);
             break;
           }
