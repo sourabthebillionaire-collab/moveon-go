@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Header from '../components/Header';
 import api from '../services/api';
-import { emitLocation, onRideRequest, connectSocket, disconnectSocket, getSocket } from '../services/socket';
+import { emitLocation, onRideRequest, connectSocket, disconnectSocket, getSocket, joinBookingRoom } from '../services/socket';
 import { setDriverSession, getDriver, getDriverToken, clearDriverSession, getActiveDriverRide, setActiveDriverRide, clearActiveDriverRide } from '../services/storage';
 import { watchPosition } from '../services/geocoding';
 import './Driver.css';
@@ -201,6 +201,15 @@ export default function Driver() {
   const gpsPosRef    = useRef(null); // keep GPS pos accessible in interval closure
   const lastEmitRef  = useRef(0);    // FIX: Throttle redundant emissions
 
+  // BUG FIX: Use Refs for values used in watchPosition/Interval closures to prevent stale data
+  const activeRideRef = useRef(null);
+  const passengersRef = useRef(0);
+  const driverRef     = useRef(null);
+
+  useEffect(() => { activeRideRef.current = activeRide; }, [activeRide]);
+  useEffect(() => { passengersRef.current = passengers; }, [passengers]);
+  useEffect(() => { driverRef.current     = driver;     }, [driver]);
+
   const t = T[lang];
 
   // ── Restore session on mount ────────────────────────────────
@@ -273,6 +282,7 @@ export default function Driver() {
               };
               setActiveRide(verifiedRide);
               setActiveDriverRide(verifiedRide);
+              joinBookingRoom(verifiedRide.id);
               setOnDuty(true);
               setTripActive(liveBooking.status === 'started');
               setPassengers(liveBooking.status === 'started' ? 1 : 0);
@@ -406,13 +416,22 @@ export default function Driver() {
       const now = Date.now();
       if (now - lastEmitRef.current > 5000) {
         lastEmitRef.current = now;
+        const d = driverRef.current;
         emitLocation({
-          ...basePayload,
+          driverId:      d?.id || d?._id,
+          vehicleId:     d?.vehicleId,
+          type:          d?.vehicleType,
+          vehicleNumber: d?.vehicleNumber,
+          busName:       d?.busName     || '',
+          routeFrom:     d?.routeFrom   || '',
+          routeTo:       d?.routeTo     || '',
+          routeNumber:   d?.routeNumber || '',
+          capacity:      d?.vehicleType === 'bus' ? 60 : 1,
           lat: pos.lat, lng: pos.lng,
           bearing: pos.bearing || 0,
           speed: Math.round((pos.speed || 0) * 3.6),
-          status: activeRide ? 'busy' : 'active',
-          passengers, // Now emitted live
+          status: activeRideRef.current ? 'busy' : 'active',
+          passengers: passengersRef.current,
         });
       }
     }, () => {
@@ -444,6 +463,7 @@ export default function Driver() {
     setOnDuty(false); setGpsPos(null); setSpeed(0);
     setTripActive(false); setRideReq(null); setActiveRide(null); setUserLocation(null);
     clearActiveDriverRide();
+    lastEmitRef.current = 0;
     try { await api.setDriverDuty(false, getDriverToken()); } catch {}
     disconnectSocket();
   };
@@ -564,7 +584,7 @@ export default function Driver() {
   // was firing simultaneously and overwriting the driver info with { action }
   // only — that was the race condition causing the 60s wait on the rider side.
   const acceptRide = async () => {
-    if (!rideReq || busy) return;
+    if (!rideReq || busy) return; 
     setBusy(true); // Prevent double-taps
     try {
       await api.respondToRide(rideReq.id, 'accept', getDriverToken());
@@ -572,9 +592,10 @@ export default function Driver() {
       const acceptedRide = { ...rideReq, id: rideReq.id, status: 'accepted' };
       setActiveRide(acceptedRide);
       setActiveDriverRide(acceptedRide);
+      joinBookingRoom(rideReq.id);
+      setRideReq(null);
       setUserLocation(null);
       setTripActive(false);
-      setRideReq(null);
       speak(
         lang === 'hi' ? 'बुकिंग स्वीकार।' :
         lang === 'or' ? 'ବୁକିଂ ଗ୍ରହଣ।' :
@@ -583,15 +604,18 @@ export default function Driver() {
       );
     } catch (err) {
       console.error('[Driver] Failed to accept ride:', err);
-      // Show error to driver so they know the accept didn't go through
-      alert('Failed to accept ride. Please try again.');
+      setRideReq(null); // FIX: Clear stale request if it's no longer valid
+      alert('Failed to accept ride. It may have been taken or cancelled.');
+    } finally {
+      setBusy(false); // FIX: Must reset busy state to allow future actions
     }
   };
 
   // ── Decline ride ────────────────────────────────────────────
   // ✅ FIXED: Same fix — HTTP only, no redundant socket emit
   const declineRide = async () => {
-    if (!rideReq) return;
+    if (!rideReq || busy) return;
+    setBusy(true);
     try {
       await api.respondToRide(rideReq.id, 'decline', getDriverToken());
       // ✅ DO NOT call emitRideResponse here — backend handles socket emit
@@ -599,7 +623,7 @@ export default function Driver() {
     } catch (err) {
       console.error('[Driver] Failed to decline ride:', err);
       setRideReq(null); // dismiss UI even on error
-    }
+    } finally { setBusy(false); }
   };
 
   const startRide = async (otpInput) => {
@@ -646,6 +670,8 @@ export default function Driver() {
       } else {
         alert('Failed to start the ride. Please check your connection and try again.');
       }
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -678,11 +704,14 @@ export default function Driver() {
     } catch (err) {
       console.error('[Driver] Failed to complete ride:', err);
       alert('Failed to complete the ride. Please try again.');
+    } finally {
+      setBusy(false);
     }
   };
 
   const cancelActiveRide = async () => {
-    if (!activeRide) return;
+    if (!activeRide || busy) return;
+    setBusy(true);
     // ── BUG FIX D ───────────────────────────────────────────────
     // Capture bookingId BEFORE clearing state — the HTTP PUT /:id/cancel
     // route emits booking:cancelled to the rider's booking room and
@@ -719,6 +748,8 @@ export default function Driver() {
       } else {
         alert('Failed to cancel the ride. Please check your connection and try again.');
       }
+    } finally {
+      setBusy(false);
     }
   };
 

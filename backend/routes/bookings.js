@@ -104,68 +104,6 @@ router.post('/', protect, bookingLimiter, asyncHandler(async (req, res) => {
   });
 }));
 
-// POST /api/bookings/:id/respond — driver accepts or declines
-router.post('/:id/respond', protectDriver, asyncHandler(async (req, res) => {
-  const { action } = req.body;
-  const bookingId  = req.params.id;
-
-  if (!['accept', 'decline'].includes(action)) {
-    return res.status(400).json({ message: 'Action must be accept or decline.' });
-  }
-
-  if (action === 'accept') {
-    const booking = await Booking.findOneAndUpdate(
-      { _id: bookingId, status: 'searching' },
-      { status: 'accepted', driverId: req.driver._id },
-      { new: true }
-    );
-
-    if (!booking) {
-      return res.status(404).json({ message: 'Booking not available. Already taken or cancelled.' });
-    }
-
-    logger.info(`Booking accepted: ${bookingId}`, { driverId: req.driver._id });
-
-    // Set driver status to 'busy' so they stop receiving new ride requests
-    await Driver.updateOne({ _id: req.driver._id }, { status: 'busy' });
-
-    const driverPayload = {
-      name:          req.driver.name,
-      phone:         req.driver.phone,
-      vehicleNumber: req.driver.vehicleNumber,
-      vehicleType:   req.driver.vehicleType,
-      rating:        req.driver.rating || 4.5,
-      eta:           '3–5 min',
-      driverId:      String(req.driver._id),
-    };
-
-    if (global.io) {
-      if (global.io.activeBookings) {
-        global.io.activeBookings.set(String(bookingId), String(req.driver._id));
-      }
-      if (global.io.driverToBooking) {
-        global.io.driverToBooking.set(String(req.driver._id), String(bookingId));
-      }
-      // BUG FIX #3: rider needs OTP immediately on accept
-      const eventPayload = { 
-        action: 'accept', 
-        driver: driverPayload,
-        otp:    booking.startOTP 
-      };
-      global.io.to(`booking:${bookingId}`).emit(`booking:${bookingId}`, eventPayload);
-    }
-
-    res.json({ message: 'Booking accepted successfully.', driver: driverPayload });
-
-  } else {
-    logger.info(`Booking declined: ${bookingId}`, { driverId: req.driver._id });
-    if (global.io) {
-      global.io.to(`booking:${bookingId}`).emit(`booking:${bookingId}`, { action: 'decline' });
-    }
-    res.json({ message: 'Booking declined.' });
-  }
-}));
-
 // PUT /api/bookings/:id/start — driver starts ride after pickup
 router.put('/:id/start', protectDriver, asyncHandler(async (req, res) => {
   const { otp } = req.body;

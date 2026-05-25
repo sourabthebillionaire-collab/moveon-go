@@ -173,8 +173,8 @@ const storedBooking = getActiveBooking();
         otp: activeBooking.startOTP, // Persist OTP to local storage
       });
 
-      // Re-establish socket listeners
-      setupBookingListeners(activeBooking._id, activeBooking.startOTP);
+      // BUG FIX: Consolidate listener setup to ensure one source of truth
+      setupBookingListeners(activeBooking._id);
     } catch (err) { /* handle */ }
   })();
   }, []);
@@ -210,16 +210,25 @@ const storedBooking = getActiveBooking();
     setFare(null);
   };
 
-  const setupBookingListeners = (id, existingOtp) => {
+  const setupBookingListeners = (id) => {
         const socket = connectSocket();
         if (roomUnsubRef.current) roomUnsubRef.current();
         roomUnsubRef.current = joinBookingRoom(id);
 
+        // BUG FIX: Resume location sharing if session is restored
+        if (riderLocationWatchRef.current) riderLocationWatchRef.current();
+        riderLocationWatchRef.current = watchPosition(pos => {
+          emitRiderLocation({ 
+            bookingId: id, lat: pos.lat, lng: pos.lng, 
+            bearing: pos.bearing, speed: pos.speed 
+          });
+        });
+
         // Attach booking and driver-location listeners so we receive later events
         const bookingEvent = `booking:${id}`;
-        const driverLocationHandler = ({ driverId, lat, lng, bearing, speed }) => {
-          if (driverIdRef.current && String(driverIdRef.current) === String(driverId)) {
-            setDriverLocation({ lat, lng, bearing, speed });
+        const driverLocationHandler = (data) => {
+          if (driverIdRef.current && String(driverIdRef.current) === String(data.driverId)) {
+            setDriverLocation({ lat: data.lat, lng: data.lng, bearing: data.bearing, speed: data.speed });
           }
         };
         driverLocationRef.current = driverLocationHandler;
@@ -227,7 +236,10 @@ const storedBooking = getActiveBooking();
 
         socket.off(bookingEvent); // clean old
         socket.on(bookingEvent, (data) => {
+          setSocketDebug(d => [...d.slice(-9), { t: Date.now(), e: bookingEvent, d: data }]);
           if (data.action === 'accept' && data.driver) {
+            clearTimeout(timeoutRef.current); // BUG FIX: Kill the searching timeout
+            clearInterval(countdownRef.current);
             setDriver(data.driver);
             driverIdRef.current = data.driver.driverId;
             if (data.otp) setOtp(data.otp);
@@ -489,6 +501,7 @@ const storedBooking = getActiveBooking();
       }, TIMEOUT_SECONDS * 1000);
     } catch (err) {
       setBooking(null);
+      setPayLoading(false); // FIX: Reset loading state so user can retry
       alert(err.message?.includes('Missing') ? 'Please fill all details.' : 'Unable to connect. Check your connection.');
     }
   };

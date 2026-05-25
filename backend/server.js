@@ -67,6 +67,7 @@ const io = new Server(server, {
   transports: ['websocket', 'polling'],
 });
 io.activeBookings = new Map(); // FIX: Initialize tracking map to prevent undefined errors in routes
+io.driverToBooking = new Map(); // FIX: Initialize driver mapping
 global.io = io;
 require('./socket/index')(io);
 
@@ -122,16 +123,19 @@ app.use(express.static(frontendBuildPath));
 // For any non-API request that doesn't match a real file, serve index.html
 // This enables React Router to handle client-side routing
 app.get('*', (req, res, next) => {
-  // Skip if this is an API request (it will hit the 404 handler below)
-  if (req.path.startsWith('/api/') || req.path === '/health') {
+  // BUG FIX: Accurate check to prevent SPA routing from swallowing API calls
+  const isApi = req.url.startsWith('/api/');
+  const isHealth = req.url === '/health';
+  
+  if (isApi || isHealth) {
     return next();
   }
   
   const indexPath = path.join(frontendBuildPath, 'index.html');
   res.sendFile(indexPath, (err) => {
     if (err) {
-      logger.warn(`Failed to serve frontend: ${err.message}`);
-      next();
+      logger.error(`Frontend serve error at ${req.url}: ${err.message}`);
+      res.status(500).send("Application load error. Please refresh.");
     }
   });
 });
