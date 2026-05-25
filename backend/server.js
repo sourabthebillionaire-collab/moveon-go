@@ -169,10 +169,10 @@ mongoose.connect(process.env.MONGODB_URI)
 // ── Graceful Shutdown ─────────────────────────────────────────
 const gracefulShutdown = (signal) => {
   logger.info(`${signal} received. Starting graceful shutdown...`);
-  server.close(() => {
+  server.close(async () => {
     logger.info('Server closed');
-    mongoose.connection.close();
-    logger.info('Database connection closed');
+    await mongoose.connection.close();
+    logger.info('Database connection closed ✅');
     process.exit(0);
   });
   

@@ -71,12 +71,8 @@ export function onRideRequest(cb) {
     s.on('ride:request', cb);
   };
 
-  if (s.connected) {
-    attach();
-  } else {
-    s.once('connect', attach);
-  }
-
+  if (s.connected) attach();
+  
   // Re-attach on every future reconnect
   s.on('connect', attach);
 
@@ -106,12 +102,8 @@ export function joinBookingRoom(bookingId) {
     console.log('[Socket] Joining booking room:', bookingId);
   };
 
-  if (s.connected) {
-    doJoin();
-  } else {
-    s.once('connect', doJoin);
-  }
-
+  if (s.connected) doJoin();
+  
   s.on('connect', doJoin);
 
   return () => s.off('connect', doJoin);

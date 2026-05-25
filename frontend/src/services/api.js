@@ -7,8 +7,10 @@
 
 // FIX: Trim accidental whitespace from env var to prevent connection failures.
 // PRODUCTION: Use relative path if no env var, facilitating 'Single-Horizon' deployments.
-const BASE = import.meta.env.VITE_API_URL?.trim() || 
-             (import.meta.env.PROD ? '/api' : 'http://localhost:3001/api');
+// IMPROVEMENT: Normalize BASE to remove trailing slash to prevent double-slashes in requests.
+const BASE = (import.meta.env.VITE_API_URL?.trim() || 
+             (import.meta.env.PROD ? '/api' : 'http://localhost:3001/api'))
+             .replace(/\/$/, '');
 
 const REQUEST_TIMEOUT = 10000; // 10 seconds
 
@@ -32,7 +34,9 @@ async function request(method, path, body = null, token = null) {
     const data = await res.json().catch(() => ({}));
 
     if (!res.ok) {
-      const err = new Error(data.message || `Request failed: ${res.status}`);
+      // IMPROVEMENT: Provide more context for non-JSON or generic server errors
+      const message = data.message || data.error || `Request failed with status ${res.status}`;
+      const err = new Error(message);
       err.status = res.status;
       err.data   = data;
       throw err;
@@ -118,11 +122,11 @@ export const api = {
 
   // Driver ride lifecycle
   startRide: (bookingId, otp, token) => 
-    put(`/bookings/${bookingId}/start`, { otp: String(otp) }, token),
+    put(`/rides/${bookingId}/start`, { otp: String(otp) }, token),
   completeRide: (bookingId, token) =>
-    put(`/bookings/${bookingId}/complete`, null, token),
+    put(`/rides/${bookingId}/complete`, null, token),
   cancelRide: (bookingId, token) =>
-    put(`/bookings/${bookingId}/cancel`, null, token),
+    put(`/rides/${bookingId}/cancel`, null, token),
 
   // ── Payments ──────────────────────────────────────────────────
   // FIX: Was called in BookRide.jsx but never defined here.

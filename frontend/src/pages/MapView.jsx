@@ -20,9 +20,10 @@ L.Icon.Default.mergeOptions({
 
 function vehicleIcon(v) {
   const colors = { bus: '#1565C0', auto: '#E6A800', cab: '#1565C0', bike: '#6D28D9' };
-  const bg = colors[v.type] || colors.bus;
+  const type = v.type || 'bus';
+  const bg = colors[type] || colors.bus;
   // FIX: Show route number on marker for buses, otherwise vehicle type
-  const label = (v.type === 'bus' && v.routeNumber) ? v.routeNumber : (v.type || 'VEH').toUpperCase();
+  const label = (type === 'bus' && v.routeNumber) ? v.routeNumber : type.toUpperCase();
   return L.divIcon({
     className: '',
     html: `<div style="background:${bg};color:#fff;font-size:10px;font-weight:700;padding:4px 8px;border-radius:6px;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.25);font-family:Inter,sans-serif;border:1.5px solid rgba(255,255,255,0.3)">${label}</div>`,
@@ -105,14 +106,20 @@ export default function MapView() {
     return () => clearInterval(interval);
   }, [userPos, filter]);
 
-  // FIX: Clear markers that don't match the new filter
+  // FIX: Markers were not properly re-appearing when switching filters back to 'all'
   useEffect(() => {
+    if (!mapInst.current) return;
+    
     Object.entries(markersRef.current).forEach(([id, marker]) => {
       const vehicle = vehicles.find(v => String(v.id) === id);
       if (filter !== 'all' && vehicle && vehicle.type !== filter) {
-        mapInst.current?.removeLayer(marker);
+        mapInst.current.removeLayer(marker);
+        delete markersRef.current[id];
       }
     });
+    
+    // Re-sync current visible vehicles
+    vehicles.forEach(v => addOrUpdateMarker(v));
   }, [filter]);
 
   // ── Real-time socket updates ──────────────────────────────────
@@ -120,16 +127,12 @@ export default function MapView() {
     const socket = connectSocket();
 
     // Tell server we're a rider — it will send back all active vehicles immediately
-    const handleConnect = () => {
+    const announce = () => {
       socket.emit('rider:connected');
     };
 
-    // If already connected, emit right away; otherwise wait for connect event
-    if (socket.connected) {
-      socket.emit('rider:connected');
-    } else {
-      socket.on('connect', handleConnect);
-    }
+    if (socket.connected) announce();
+    socket.on('connect', announce);
 
     // ✅ Snapshot — all active vehicles at the moment we connected
     const unsubSnapshot = onVehiclesSnapshot((vehicles) => {
@@ -166,7 +169,7 @@ export default function MapView() {
     });
 
     return () => {
-      socket.off('connect', handleConnect);
+      socket.off('connect', announce);
       unsubSnapshot();
       unsubUpdate();
       unsubOffline();
@@ -202,9 +205,10 @@ export default function MapView() {
       const jitter = (Math.random() - 0.5) * 0.0001;
       existing.setLatLng([v.lat + jitter, v.lng + jitter]);
       existing.setPopupContent(buildPopup(v));
+      existing.setIcon(vehicleIcon(v)); // Ensure icon labels update
     } else {
       const jitter = (Math.random() - 0.5) * 0.0001;
-      const m = L.marker([v.lat + jitter, v.lng + jitter], { icon: vehicleIcon(v.type) })
+      const m = L.marker([v.lat + jitter, v.lng + jitter], { icon: vehicleIcon(v) })
         .addTo(map)
         .on('click', () => focusVehicle(v));
       m.bindPopup(buildPopup(v));
