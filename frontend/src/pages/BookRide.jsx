@@ -354,6 +354,10 @@ export default function BookRide() {
             });
             stopPolling();
           } else if (data.action === 'started') {
+            if (data.driver) {
+               setDriver(data.driver);
+               driverIdRef.current = data.driver.driverId;
+            }
             setBooking('found');
             updateActiveStatus('started');
           } else if (data.action === 'completed') {
@@ -422,6 +426,7 @@ export default function BookRide() {
           rating: b.driverId.rating,
           eta: b.eta || '3-5 min'
         });
+        driverIdRef.current = b.driverId._id;
         if (b.startOTP) setOtp(b.startOTP);
         setBooking('found');
         setRideStatus(b.status);
