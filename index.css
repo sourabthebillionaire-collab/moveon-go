@@ -1,0 +1,24 @@
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  overscroll-behavior: none;
+  background: #f8fafc;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh; /* Use Dynamic Viewport Height for mobile browsers */
+  width: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+.page {
+  flex: 1;
+  overflow-y: auto; /* Only the page content area scrolls */
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 0; /* Space for BottomNav is handled by flex-direction: column on .app */
+}

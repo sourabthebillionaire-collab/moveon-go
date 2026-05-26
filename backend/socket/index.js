@@ -68,32 +68,33 @@ module.exports = function initSocket(io) {
         return;
       }
 
-      // ✅ SECURITY: Verify user owns this booking before allowing them to join the room
-      const bookingCheck = await Booking.findById(bId).select('userId').lean();
-      if (!bookingCheck || String(bookingCheck.userId) !== String(userId)) {
-        logger.warn(`User ${userId} tried to join unauthorized booking room ${bId}`);
+      // ✅ OPTIMIZATION: Fetch all recovery data in one atomic query
+      const booking = await Booking.findById(bId).select('userId driverId startOTP status').lean();
+      
+      if (!booking || String(booking.userId) !== String(userId)) {
+        logger.warn(`Unauthorized rider:joinBooking: User ${userId} access denied to ${bId}`);
         return;
       }
 
       socket.join(`booking:${bId}`);
       logger.info(`[Socket] Rider ${userId} joined room booking:${bId}`);
 
-      const driverId = activeBookings.get(bId);
+      // ✅ SESSION RECOVERY: Restore tracking state from DB if memory maps are empty (e.g. server restart)
+      let driverId = activeBookings.get(bId) || (booking.driverId ? String(booking.driverId) : null);
+      
       if (driverId) {
         const dId = String(driverId);
+        activeBookings.set(bId, dId);
         driverToBooking.set(dId, bId);
-        const [driver, booking] = await Promise.all([
-          Driver.findById(dId).select('name phone vehicleNumber vehicleType rating').lean(),
-          Booking.findById(bId).select('startOTP status').lean()
-        ]);
-
+        
+        const driver = await Driver.findById(dId).select('name phone vehicleNumber vehicleType rating').lean();
         const pos = activeVehiclePositions.get(dId);
-        // Replay 'accept' or 'started' based on actual DB state
-        const action = booking?.status === 'started' ? 'started' : 'accept';
+        
+        const action = booking.status === 'started' ? 'started' : 'accept';
 
         socket.emit(`booking:${bId}`, {
           action,
-          otp:    booking?.startOTP,
+          otp:    booking.startOTP,
           driver: driver ? {
             name:          driver.name,
             phone:         driver.phone,
@@ -188,6 +189,13 @@ module.exports = function initSocket(io) {
         type, vehicleNumber, busName, routeFrom, routeTo, routeNumber, passengers, capacity
       } = data;
       
+      // ✅ SECURITY: Prevent malicious clients from spoofing other drivers
+      const registeredId = connectedDrivers.get(socket.id);
+      if (!registeredId || String(driverId) !== String(registeredId)) {
+        logger.warn(`Unauthorized location attempt: Socket ${socket.id} tried to update Driver ${driverId}`);
+        return;
+      }
+
       // Simplified Validation: Just ensure numbers exist
       const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
       if (!isNum(lat) || !isNum(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
@@ -349,6 +357,7 @@ module.exports = function initSocket(io) {
               driverId:  String(driverId),
             });
             activeBookings.delete(bookingId);
+            io.arrivedNotified?.delete(bIdStr);
             driverToBooking.delete(String(driverId));
             console.log(`[Socket] Driver ${driverId} disconnected mid-ride — rider for booking ${bookingId} notified`);
             break;
@@ -371,31 +380,33 @@ module.exports = function initSocket(io) {
     try {
       const stale = await Driver.find({
         onDuty: true,
-        'location.updatedAt': { $lt: new Date(Date.now() - 45000) }, // Tighter cleanup
+        'location.updatedAt': { $lt: new Date(Date.now() - 60000) }, // 60s stale threshold
       }).select('_id'); // Optimization: only fetch IDs
       for (const d of stale) {
         await Driver.updateOne({ _id: d._id }, { status: 'offline', onDuty: false });
-        activeVehiclePositions.delete(String(d._id));
         
+        const dIdStr = String(d._id);
+        activeVehiclePositions.delete(dIdStr);
+
         // ── BUG FIX #3 ───────────────────────────────────────────
-        // Stale-driver cleanup also needs to notify any active rider.
-        // Previously this only did io.emit('driver:offline') which
-        // riders had no handler for in their booking context.
         for (const [bookingId, bDriverId] of activeBookings.entries()) {
-          if (String(bDriverId) === String(d._id)) {
-            io.to(`booking:${bookingId}`).emit(`booking:${bookingId}`, {
+          if (String(bDriverId) === dIdStr) {
+            const bIdStr = String(bookingId);
+            io.to(`booking:${bIdStr}`).emit(`booking:${bIdStr}`, {
               action:    'driver_offline',
-              bookingId: String(bookingId),
-              driverId:  String(d._id),
+              bookingId: bIdStr,
+              driverId:  dIdStr,
             });
             activeBookings.delete(bookingId);
-            console.log(`[Socket] Stale driver ${d._id} — rider for booking ${bookingId} notified`);
+            io.arrivedNotified?.delete(bIdStr);
+            driverToBooking.delete(dIdStr);
+            console.log(`[Socket] Stale driver ${dIdStr} — rider for booking ${bookingId} notified`);
             break;
           }
         }
 
         io.emit('driver:offline', { driverId: d._id });
       }
-    } catch {}
-  }, 60000); // FIX: Run every 60 seconds for tighter tracking
+    } catch (err) { logger.error(`Stale driver cleanup error: ${err.message}`); }
+  }, 60000); 
 };

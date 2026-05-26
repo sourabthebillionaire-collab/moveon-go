@@ -7,7 +7,6 @@ const VEHICLE_TYPES = [
   { id: 'bus',  emoji: '🚌', label: 'Bus',           desc: 'City / intercity bus service' },
   { id: 'auto', emoji: '🛺', label: 'Auto Rickshaw', desc: 'Up to 3 passengers'           },
   { id: 'cab',  emoji: '🚕', label: 'Cab / Taxi',    desc: 'Up to 4 passengers'           },
-  { id: 'bike', emoji: '🏍️', label: 'Bike Taxi',     desc: 'Solo passenger rides'          },
 ];
 
 const STEPS = ['Personal', 'Vehicle', 'Security'];

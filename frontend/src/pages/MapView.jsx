@@ -19,7 +19,7 @@ L.Icon.Default.mergeOptions({
 });
 
 function vehicleIcon(v) {
-  const colors = { bus: '#1565C0', auto: '#E6A800', cab: '#1565C0', bike: '#6D28D9' };
+  const colors = { bus: '#1565C0', auto: '#E6A800', cab: '#1565C0' };
   const type = v.type || 'bus';
   const bg = colors[type] || colors.bus;
   // FIX: Show route number on marker for buses, otherwise vehicle type
@@ -308,43 +308,46 @@ export default function MapView() {
   return (
     <div className="app">
       <Header title="Live Map" />
-      <div className="map-page" style={{ position: 'relative' }}>
+      <div className="page map-page" style={{ position: 'relative' }}>
 
         {/* Filter bar */}
-        <div className="map-filters">
-          {['all','bus','auto','cab','bike'].map(f => (
-            <button key={f} className={`chip ${filter===f?'active':''}`} onClick={() => setFilter(f)}>
-              {f === 'all' ? 'All' : f.charAt(0).toUpperCase()+f.slice(1)}
-            </button>
-          ))}
+        <div className="map-filters" style={{
+          position: 'absolute',
+          top: '12px',
+          left: '0',
+          right: '0',
+          zIndex: 1000,
+          display: 'flex',
+          justifyContent: 'center',
+          pointerEvents: 'none'
+        }}>
+          <div style={{ display: 'flex', gap: '8px', pointerEvents: 'auto', background: 'rgba(255,255,255,0.9)', padding: '6px 12px', borderRadius: '30px', boxShadow: '0 4px 15px rgba(0,0,0,0.1)', backdropFilter: 'blur(8px)', border: '1px solid var(--gray-200)' }}>
+            {['all','bus','auto','cab'].map(f => (
+              <button key={f} className={`chip ${filter===f?'active':''}`} onClick={() => setFilter(f)} style={{ margin: 0 }}>
+                {f === 'all' ? 'All' : f.charAt(0).toUpperCase()+f.slice(1)}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Map */}
         <div ref={mapRef} className="map-canvas" />
 
-        {/* ✅ Loading Overlay: Smooth transition when fading out */}
-        <div style={{
-          position: 'absolute',
-          inset: 0,
-          zIndex: 1001,
-          background: 'rgba(255,255,255,0.8)',
-          backdropFilter: 'blur(4px)',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: 12,
-          opacity: loading ? 1 : 0,
-          visibility: loading ? 'visible' : 'hidden',
-          pointerEvents: loading ? 'auto' : 'none',
-          transition: 'opacity 0.5s ease, visibility 0.5s'
-        }}>
-          <span className="spinner" style={{ width: 32, height: 32, borderWidth: 3 }} />
-          <p style={{ fontSize: 14, fontWeight: 600, color: 'var(--gray-600)', margin: 0 }}>Fetching live vehicles...</p>
-        </div>
-
         {/* Bottom panel */}
         <div className="map-panel">
+          {/* ✅ Integrated Loading Bar: Professional non-blocking indicator */}
+          {loading && (
+            <div style={{ 
+              display: 'flex', alignItems: 'center', gap: 10, 
+              padding: '12px 16px', background: 'var(--white)',
+              borderBottom: '1px solid var(--gray-100)',
+              animation: 'fadeIn 0.3s ease'
+            }}>
+              <span className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} />
+              <span style={{ fontSize: 13, color: 'var(--gray-500)', fontWeight: 500 }}>Connecting to live fleet...</span>
+            </div>
+          )}
+
           {filtered.length > 0 && (
             <div className="chips" style={{paddingBottom:10}}>
               {filtered.map(v => (

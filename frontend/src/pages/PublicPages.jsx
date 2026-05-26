@@ -49,7 +49,7 @@ const FAQS = [
   { q: 'How does live bus tracking work?',   a: 'Buses with GPS-enabled devices share their location in real-time. Open Live Map to see all active buses near you. No data means no active buses right now.' },
   { q: 'How do I become a driver?',          a: 'Go to Settings → Driver Panel. Your Vehicle ID will be assigned by our admin. Contact us on the number below to register.' },
   { q: 'The map shows no vehicles?',         a: 'This means no drivers are currently online in your area. Vehicles appear automatically when drivers go on duty.' },
-  { q: 'How is fare calculated?',            a: 'Auto: ₹25 base + ₹14/km. Cab: ₹60 + ₹16/km. Bike: ₹20 + ₹8/km. Actual fare shown before booking.' },
+  { q: 'How is fare calculated?',            a: 'Auto: ₹25 base + ₹14/km. Cab: ₹60 + ₹16/km. Actual fare shown before booking.' },
   { q: 'GPS not detecting my location?',     a: 'Open your phone Settings → Apps → MoveOn Go → Permissions → Location → Allow all the time.' },
 ];
 

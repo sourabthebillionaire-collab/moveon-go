@@ -10,7 +10,6 @@ const TYPE_META = {
   bus:  { emoji: '🚌', label: 'Bus',  color: '#1565C0', bg: '#E3F2FD' },
   auto: { emoji: '🛺', label: 'Auto', color: '#E65100', bg: '#FFF3E0' },
   cab:  { emoji: '🚕', label: 'Cab',  color: '#1B5E20', bg: '#E8F5E9' },
-  bike: { emoji: '🏍️', label: 'Bike', color: '#4A148C', bg: '#F3E5F5' },
 };
 
 const STATUS_META = {
@@ -65,8 +64,11 @@ export default function History() {
       setError('');
       try {
         const token = getToken();
-        // FIX: Ensure loading is stopped even on early exit
-        if (!token) { setError('Please sign in to view history.'); setLoading(false); return; } 
+        if (!token) { 
+          setError('Please sign in to view history.'); 
+          setLoading(false); 
+          return; 
+        } 
         const data = await api.getBookings(token); // FIX: Ensure API call is awaited
         setBookings(data.bookings || []);
       } catch {

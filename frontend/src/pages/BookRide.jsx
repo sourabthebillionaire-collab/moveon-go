@@ -123,7 +123,6 @@ const playTada = () => {
 const TYPES = [
   { id: 'auto', label: 'Auto Rickshaw', cap: 'Up to 3 passengers', eta: '3–6 min', emoji: '🛺' },
   { id: 'cab',  label: 'Cab',           cap: 'Up to 4 passengers', eta: '5–8 min', emoji: '🚕' },
-  { id: 'bike', label: 'Bike',          cap: '1 passenger',        eta: '2–4 min', emoji: '🏍️' },
 ];
 
 const TIMEOUT_SECONDS = 60;
@@ -373,6 +372,11 @@ export default function BookRide() {
           }
         });
 
+        // ✅ QUICK CONNECTION: Check if driver is already assigned before joining room
+        if (initialStatus === 'accepted' || initialStatus === 'started') {
+          startPolling(id); // Force an immediate data sync
+        }
+
         const roomUnsub = joinBookingRoom(id, getToken());
         
         // 5. Consolidate cleanup logic to prevent memory leaks
@@ -420,6 +424,7 @@ export default function BookRide() {
         });
         if (b.startOTP) setOtp(b.startOTP);
         setBooking('found');
+        setRideStatus(b.status);
         stopPolling(); // logic restored, stop polling
       }
     }, 5000);
@@ -460,6 +465,10 @@ export default function BookRide() {
         roomUnsubRef.current();
         roomUnsubRef.current = null;
       }
+      // ✅ MEMORY LEAK FIX: Clear all background processes
+      if (pollRef.current) clearInterval(pollRef.current);
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      if (countdownRef.current) clearInterval(countdownRef.current);
     };
   }, [bookingId]);
 
@@ -492,6 +501,8 @@ export default function BookRide() {
         otp: b.otp,
       });
       setupBookingListeners(b.id, b.status);
+      // ✅ PROACTIVE SYNC: Start polling immediately to catch quick driver accepts
+      startPolling(b.id);
     } catch (err) {
       setBooking(null);
       setPayLoading(false);
@@ -762,7 +773,9 @@ export default function BookRide() {
       {rideStatus === 'started' && (
         <button 
           className={`br-boarded-btn ${isBoarded ? 'toggled' : ''}`} 
+          disabled={isBoarded}
           onClick={async () => { 
+            if (isBoarded) return;
             const nextState = !isBoarded;
             setIsBoarded(nextState); 
             playPop(); 
@@ -810,7 +823,7 @@ export default function BookRide() {
           ))}
         </div>
 
-        <p className="section-label" style={{padding:'0 0 8px'}}>Where to, Bestie? 📍</p>
+        <p className="section-label" style={{padding:'0 0 8px'}}>Route Details</p>
         <div className="card" style={{padding:14,marginBottom:14,overflow:'visible', borderRadius:'24px', border:'1px solid rgba(0,0,0,0.05)'}}>
           <PlaceSearch placeholder="Pickup location" value={pickup}
             onSelect={p => { if(p){setPickupCoords(p);setPickup(p.name);}else setPickupCoords(null); }}

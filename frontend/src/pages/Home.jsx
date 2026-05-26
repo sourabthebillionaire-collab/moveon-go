@@ -9,29 +9,10 @@ import api from '../services/api';
 import { getToken } from '../services/storage';
 import './Home.css';
 
-// Subtle UI click sound helper
-const playPop = () => {
-  try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const osc = ctx.createOscillator();
-    const g = ctx.createGain();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(500, ctx.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
-    g.gain.setValueAtTime(0.1, ctx.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
-    osc.connect(g);
-    g.connect(ctx.destination);
-    osc.start();
-    osc.stop(ctx.currentTime + 0.1);
-  } catch (e) { /* ignore audio errors */ }
-};
-
 const VEHICLE_TYPES = [
   { id: 'bus',  label: 'Bus',  sub: 'Track live buses',   icon: BusIcon,  path: '/buses'          },
   { id: 'auto', label: 'Auto', sub: 'Book auto rickshaw', icon: AutoIcon, path: '/book?type=auto' },
   { id: 'cab',  label: 'Cab',  sub: 'Book a cab',         icon: CabIcon,  path: '/book?type=cab'  },
-  { id: 'bike', label: 'Bike', sub: 'Quick bike ride',    icon: BikeIcon, path: '/book?type=bike' },
 ];
 
 export default function Home() {
@@ -104,15 +85,11 @@ export default function Home() {
 
         {/* ── Hero ──────────────────────────── */}
         <div className="home-hero">
-          {/* Background decoration */}
-          <div className="home-hero__bg-circle home-hero__bg-circle--1"/>
-          <div className="home-hero__bg-circle home-hero__bg-circle--2"/>
-
           <div className="home-hero__top" style={{marginTop: '10px'}}>
             <div className="home-hero__text">
-              <p className="home-hero__greet" style={{opacity: 0.8, fontSize: '14px', fontWeight: 500}}>{greeting} ✨</p>
+              <p className="home-hero__greet" style={{opacity: 0.8, fontSize: '14px', fontWeight: 500}}>{greeting},</p>
               <h1 className="home-hero__name" style={{fontSize: '28px', letterSpacing: '-0.5px'}}>{firstName}</h1>
-              <p className="home-hero__sub" style={{marginTop: '4px', fontWeight: 500}}>Vibe check: where to next? 🚀</p>
+              <p className="home-hero__sub" style={{marginTop: '4px', fontWeight: 500}}>Request a ride or track a vehicle</p>
             </div>
             <div className="home-hero__live">
               <span className="live-dot"/>
@@ -121,7 +98,7 @@ export default function Home() {
           </div>
 
           {/* Search card */}
-          <div className="home-search" style={{borderRadius: '30px', boxShadow: '0 20px 40px rgba(0,0,0,0.1)', border: '1px solid rgba(255,255,255,0.5)', backdropFilter: 'blur(20px)', background: 'rgba(255,255,255,0.85)'}}>
+          <div className="home-search" style={{borderRadius: '12px', boxShadow: '0 4px 20px rgba(0,0,0,0.08)', border: '1px solid var(--gray-200)', background: 'white'}}>
             <div className="home-search__row">
               <div className="home-search__dot home-search__dot--green"/>
               <div className="home-search__field">
@@ -161,9 +138,9 @@ export default function Home() {
               </div>
             </div>
 
-            <button className="home-search__btn" onClick={handleSearch} style={{borderRadius: '18px', height: '52px', fontWeight: 800, transition: 'all 0.2s'}}>
+            <button className="home-search__btn" onClick={handleSearch} style={{borderRadius: '12px', height: '52px', fontWeight: 700, transition: 'all 0.2s'}}>
               <SearchIcon/>
-              Let's Go!
+              Search Rides
             </button>
           </div>
         </div>
@@ -171,9 +148,9 @@ export default function Home() {
         {/* ── Stats strip ───────────────────── */}
         <div className="home-stats">
           {[
-            { val: tripCount,      label: 'Trips',     icon: '🛺' },
+            { val: tripCount,      label: 'Total Rides', icon: '🚗' },
             { val: '4G',           label: 'Network',   icon: '📶' },
-            { val: 'OD',           label: 'Region',    icon: '📍' },
+            { val: 'Live',         label: 'Tracking',  icon: '🛰️' },
           ].map((s, i) => (
             <div key={i} className="home-stat">
               <span className="home-stat__icon">{s.icon}</span>
@@ -185,23 +162,20 @@ export default function Home() {
 
         {/* ── Vehicle types ─────────────────── */}
         <div className="home-section">
-          <p className="home-section__label slide-up" style={{fontWeight: 800, fontSize: '15px', animationDelay: '0.05s', opacity: 0 }}>Pick Your Ride 🏎️</p>
+          <p className="home-section__label" style={{fontWeight: 700, fontSize: '14px', color: 'var(--gray-700)' }}>Available Services</p>
           <div className="home-vehicles">
             {VEHICLE_TYPES.map((v, i) => (
               <button 
                 key={v.id} 
-                className="home-veh slide-up" 
+                className="home-veh" 
                 onClick={() => {
-                  playPop();
                   window.navigator?.vibrate?.(15);
                   navigate(v.path);
                 }} 
                 style={{
-                  borderRadius: '24px', 
+                  borderRadius: '12px', 
                   transition: 'all 0.2s', 
-                  padding: '16px',
-                  animationDelay: `${(i + 1) * 0.1}s`,
-                  opacity: 0
+                  padding: '16px'
                 }}
               >
                 <div className="home-veh__icon" style={{transform: 'scale(1.1)'}}><v.icon/></div>
@@ -214,19 +188,18 @@ export default function Home() {
         </div>
 
         {/* ── Quick access ──────────────────── */}
-        <div className="home-section">
-          <p className="home-section__label slide-up" style={{ animationDelay: '0.05s', opacity: 0 }}>Quick Access</p>
+        <div className="home-section" style={{marginTop: '8px'}}>
+          <p className="home-section__label">Quick Access</p>
           <div className="home-quick">
             {[
-              { label: 'Trip History',  sub: 'View past rides',    path: '/history',    emoji: '📋', color: '#EEF4FF', dot: '#0D47A1' },
-              { label: 'Saved Places',  sub: 'Your favourites',    path: '/favourites', emoji: '❤️', color: '#FFF0F0', dot: '#DC2626' },
-              { label: 'Live Map',      sub: 'Track vehicles now', path: '/map',        emoji: '🗺️', color: '#E6F7EE', dot: '#00A046' },
-              { label: 'Help',          sub: 'Support & FAQs',     path: '/support',    emoji: '💬', color: '#FFFBE6', dot: '#E6A800' },
+              { label: 'Ride History',  sub: 'View completed trips', path: '/history',    emoji: '📋', color: '#EEF4FF', dot: '#0D47A1' },
+              { label: 'Saved Places',  sub: 'Manage destinations',  path: '/favourites', emoji: '🏠', color: '#FFF0F0', dot: '#DC2626' },
+              { label: 'Live Map',      sub: 'View active vehicles', path: '/map',        emoji: '🗺️', color: '#E6F7EE', dot: '#00A046' },
+              { label: 'Support',       sub: 'Access help center',   path: '/support',    emoji: '💬', color: '#FFFBE6', dot: '#E6A800' },
             ].map((q, i) => (
               <button 
                 key={i} 
-                className="home-quick-item slide-up" 
-                style={{ animationDelay: `${(i + 1) * 0.1}s`, opacity: 0 }}
+                className="home-quick-item"
                 onClick={() => navigate(q.path)}
               >
                 <div className="home-quick-item__icon" style={{background: q.color}}>
@@ -253,4 +226,3 @@ function SearchIcon() { return <svg width="16" height="16" viewBox="0 0 24 24" f
 function BusIcon()    { return <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><rect x="3" y="3" width="18" height="13" rx="2"/><path d="M3 11h18M8 19h8M10 19v-3m4 3v-3"/><circle cx="7" cy="16" r="1" fill="currentColor"/><circle cx="17" cy="16" r="1" fill="currentColor"/></svg>; }
 function AutoIcon()   { return <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><path d="M5 11l1.5-4.5h11L19 11"/><path d="M3 11h18v6H3z"/><circle cx="7" cy="17" r="2"/><circle cx="17" cy="17" r="2"/><path d="M3 13h18"/></svg>; }
 function CabIcon()    { return <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><path d="M5 11l2-5h10l2 5"/><rect x="3" y="11" width="18" height="7" rx="1"/><circle cx="7.5" cy="18" r="1.5"/><circle cx="16.5" cy="18" r="1.5"/><path d="M3 14h18M9 6h6"/></svg>; }
-function BikeIcon()   { return <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><circle cx="5.5" cy="17.5" r="3.5"/><circle cx="18.5" cy="17.5" r="3.5"/><path d="M15 6h-3l-3 8h9"/><path d="M5.5 17.5l5-8"/><circle cx="15" cy="6" r="1" fill="currentColor"/></svg>; }

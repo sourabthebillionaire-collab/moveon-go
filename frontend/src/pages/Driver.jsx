@@ -49,6 +49,7 @@ const T = {
     navigateDrop:  'Navigate to Drop',
     scanQr:        'Scan Rider QR',
     cashReceived:  'Cash Received',
+    techSupport:   'Technical Support',
     confirmCash:   'Cash collection acknowledged.',
     cancelRide:    'Cancel Ride',
     reportIssue:   'Report Issue',
@@ -100,6 +101,7 @@ const T = {
     navigateDrop:  'ड्रॉप पर जाएं',
     scanQr:        'QR स्कैन करें',
     cashReceived:  'नकद प्राप्त हुआ',
+    techSupport:   'तकनीकी सहायता',
     confirmCash:   'नकद प्राप्ति की पुष्टि हुई।',
     cancelRide:    'राइड रद्द करें',
     reportIssue:   'समस्या बताएं',
@@ -151,6 +153,7 @@ const T = {
     navigateDrop:  'ଛାଡ଼ିବା ସ୍ଥାନକୁ ଯାଆନ୍ତୁ',
     scanQr:        'QR ସ୍କାନ୍ କରନ୍ତୁ',
     cashReceived:  'ନଗଦ ଗ୍ରହଣ କଲେ',
+    techSupport:   'ଯାନ୍ତ୍ରିକ ସହାୟତା',
     confirmCash:   'ନଗଦ ଗ୍ରହଣ ସଫଳ ହେଲା।',
     cancelRide:    'ରାଇଡ୍ ବାତିଲ କରନ୍ତୁ',
     reportIssue:   'ସମସ୍ୟା ଜଣାନ୍ତୁ',
@@ -213,6 +216,7 @@ export default function Driver() {
   const [toast,       setToast]       = useState(null);
   const [gpsError,   setGpsError]  = useState(false);
   const [gpsStale,   setGpsStale]  = useState(false);
+  const [maxAttemptsReached, setMaxAttemptsReached] = useState(false);
   const unwatchRef   = useRef(null);
   const pingRef      = useRef(null);
   const gpsPosRef    = useRef(null); // keep GPS pos accessible in interval closure
@@ -222,6 +226,7 @@ export default function Driver() {
   const healthAlertSentRef = useRef(false);
   const reconnectAttemptsRef = useRef(0);
   const MAX_RECONNECT_ATTEMPTS = 3;
+  const toastTimeoutRef = useRef(null);
 
   // BUG FIX: Use Refs for values used in watchPosition/Interval closures to prevent stale data
   const activeRideRef = useRef(null);
@@ -440,6 +445,7 @@ export default function Driver() {
     if (unwatchRef.current) unwatchRef.current();
     setGpsError(false);
     setGpsStale(false);
+    setMaxAttemptsReached(false);
     lastGpsUpdateRef.current = Date.now();
 
     unwatchRef.current = watchPosition(pos => {
@@ -508,6 +514,7 @@ export default function Driver() {
           startTracking();
         } else {
           console.warn('[Auto-Reconnect] Max attempts reached. GPS remains disabled/stale.');
+          setMaxAttemptsReached(true);
           // ✅ Operational Monitoring: Log the failure to the backend
           const token = getDriverToken();
           if (token) {
@@ -581,6 +588,7 @@ export default function Driver() {
     gpsPosRef.current = null;
     setOnDuty(false); setGpsPos(null); setSpeed(0);
     setTripActive(false); setRideReq(null); setActiveRide(null); setUserLocation(null);
+    setMaxAttemptsReached(false);
     clearActiveDriverRide();
     lastEmitRef.current = 0;
     try { await api.setDriverDuty(false, getDriverToken()); } catch {}
@@ -678,10 +686,10 @@ export default function Driver() {
       // Also clear active ride if driver somehow accepted it simultaneously
       setActiveRide(prev => { // FIX: Clear active ride if it matches the cancelled ID
         if (prev && String(prev.id) === String(cancelledId)) {
-          clearActiveDriverRide();
           setTripActive(false);
           setUserLocation(null);
           setPassengers(0);
+          clearActiveDriverRide();
           return null;
         }
         return prev;
@@ -694,10 +702,11 @@ export default function Driver() {
       }]);
       
       if (data.message) {
+        if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
         setToast(data.message);
         speak(data.message, lang);
         window.navigator?.vibrate?.([100, 50, 100]);
-        setTimeout(() => setToast(null), 6000);
+        toastTimeoutRef.current = setTimeout(() => setToast(null), 6000);
       }
     };
 
@@ -1123,6 +1132,18 @@ export default function Driver() {
           </div>
         )}
 
+        {onDuty && maxAttemptsReached && (
+          <div style={{padding: '0 16px', marginTop: 8}}>
+            <button 
+              className="btn btn--danger btn--full" 
+              style={{height: 40, fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8}}
+              onClick={() => window.open('tel:+917328060281')}
+            >
+              <PhoneIcon /> {t.techSupport}
+            </button>
+          </div>
+        )}
+
         {activeRide && (
           <div className="drv-combined-ride-area">
           <div className="drv-active-ride-card card" style={{margin:'12px 16px',padding:'16px'}}>
@@ -1155,7 +1176,20 @@ export default function Driver() {
              )}
           </div>
           <div className="drv-user-location-card card" style={{margin:'0 16px 16px',padding:'12px 14px'}}>
-             {/* ... UI Content ... */}
+            <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+              <div>
+                <div style={{fontSize: 11, color: 'var(--gray-400)', fontWeight: 700, textTransform: 'uppercase'}}>Passenger Status</div>
+                <div style={{fontSize: 14, fontWeight: 600, color: 'var(--gray-900)', marginTop: 2}}>
+                  {userLocation ? '🟢 Live location active' : '⚪ Waiting for GPS signal'}
+                </div>
+              </div>
+              {userLocation && (
+                <div className="badge badge--green">
+                  <span className="live-dot" style={{width:6, height:6, background: 'white'}} />
+                  CONNECTED
+                </div>
+              )}
+            </div>
           </div>
           </div>
         )}

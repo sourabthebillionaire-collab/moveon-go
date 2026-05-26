@@ -8,7 +8,7 @@ const SECTIONS = [
     title: '1. Information We Collect',
     content: `MoveOn Go collects the following information to provide our services:
 
-• Location Data: Real-time GPS coordinates for tracking buses, autos, cabs and bikes. This data is transmitted securely and is only used for route calculation and live tracking.
+• Location Data: Real-time GPS coordinates for tracking buses, autos, and cabs. This data is transmitted securely and is only used for route calculation and live tracking.
 
 • Account Information: Name, phone number, and email address for account creation and communication.
 

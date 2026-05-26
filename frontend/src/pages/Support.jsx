@@ -8,7 +8,7 @@ const FAQS = [
   { q: 'How do I book an auto or cab?',      a: 'Go to Home → tap Auto or Cab → enter pickup & drop → tap Book. A driver will be assigned within minutes.' },
   { q: 'How does live bus tracking work?',   a: 'Buses with GPS-enabled devices share their location in real-time. Open Live Map to see all active buses near you.' },
   { q: 'Can I cancel a booking?',            a: 'Yes. Go to your active booking and tap Cancel. Cancellations within 2 minutes are free.' },
-  { q: 'How is the fare calculated?',        a: 'Fare = Base charge + Per km rate × Distance. Auto: ₹25 base + ₹14/km. Cab: ₹60 base + ₹16/km. Bike: ₹20 + ₹8/km.' },
+  { q: 'How is the fare calculated?',        a: 'Fare = Base charge + Per km rate × Distance. Auto: ₹25 base + ₹14/km. Cab: ₹60 base + ₹16/km.' },
   { q: 'My GPS is not working. What to do?', a: 'Allow Location permission for MoveOn Go in phone Settings → Apps → MoveOn Go → Permissions → Location → Allow all the time.' },
   { q: 'How do I become a driver?',          a: 'Tap the menu → Register as Driver → fill in your details → submit. Admin will approve within 24–48 hours.' },
   { q: 'Is my location data safe?',          a: 'Yes. All location data is encrypted and only shared during active trips. We never sell your data. See our Privacy Policy.' },
