@@ -37,7 +37,7 @@ router.post('/:rideId/respond', protectDriver, asyncHandler(async (req, res) => 
         driverId:      String(req.driver._id),
       };
 
-      if (global.io) {
+      if (global.io && booking) {
         if (global.io.activeBookings) {
           global.io.activeBookings.set(String(rideId), String(req.driver._id));
         }

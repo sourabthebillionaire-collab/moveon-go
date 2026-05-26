@@ -172,112 +172,41 @@ export default function BookRide() {
 
   // ── Restore active booking on mount ─────────────────────────
   useEffect(() => {
-    (async () => {
+    const syncActiveBooking = async () => {
       try {
-        const storedBooking = getActiveBooking();
-        if (!storedBooking) return;
-
-        // Restore immediately from localStorage so accepted booking remains visible
-        const initialBooking = typeof storedBooking === 'string'
-          ? { id: storedBooking }
-          : storedBooking;
-
-        if (initialBooking.id || initialBooking._id) {
-          setBookingId(initialBooking._id || initialBooking.id);
-          setBooking(['accepted', 'started'].includes(initialBooking.status) ? 'found' : 'searching');
-          setRideStatus(initialBooking.status);
-          setType(initialBooking.type || type);
-          setPickup(initialBooking.pickup || pickup);
-          setPickupCoords(initialBooking.pickupCoords || pickupCoords);
-          setDropoff(initialBooking.dropoff || dropoff);
-          setDropoffCoords(initialBooking.dropoffCoords || dropoffCoords);
-          setPayment(initialBooking.payment || payment);
-          if (initialBooking.fareAmount != null) {
-            setFare({
-              min: initialBooking.fareAmount,
-              max: initialBooking.fareAmount,
-              amount: initialBooking.fareAmount,
-              display: initialBooking.fare || `₹${initialBooking.fareAmount}`
-            });
-          }
-          if (initialBooking.driver) {
-            setDriver(initialBooking.driver);
-            driverIdRef.current = initialBooking.driver.driverId;
-          }
-          if (initialBooking.otp) setOtp(initialBooking.otp);
+        const result = await api.getActiveBooking(getToken());
+        const b = result?.booking;
+        if (!b) {
+          if (bookingId) handleBookingTermination(null); 
+          return;
         }
 
-      const result = await api.getActiveBooking(getToken());
-      const activeBooking = result?.booking;
-      
-      // ✅ RECOVERY LOGIC: If the API confirms NO active booking exists for the user,
-      // then we clear the local session.
-      if (result && !activeBooking) {
-         clearActiveBooking();
-         setBooking(null);
-         setBookingId(null);
-         setDriver(null);
-         return;
-      } 
+        // Calculate remaining countdown time based on creation date
+        const createdAt = new Date(b.createdAt).getTime();
+        const elapsed = Math.floor((Date.now() - createdAt) / 1000);
+        const remaining = Math.max(0, TIMEOUT_SECONDS - elapsed);
+        setCountdown(remaining);
 
-      // If we got here but activeBooking is null (unlikely due to check above), just wait.
-      if (!activeBooking) return;
-
-      // ✅ Refresh booking state from backend
-      const activeDriver = activeBooking.driverId ? {
-        driverId: activeBooking.driverId._id,
-        name: activeBooking.driverId.name,
-        phone: activeBooking.driverId.phone,
-        vehicleNumber: activeBooking.driverId.vehicleNumber,
-        rating: activeBooking.driverId.rating,
-        eta: activeBooking.eta || '3–5 min'
-      } : null;
-
-      setBookingId(activeBooking._id);
-      setBooking(activeBooking.status === 'searching' ? 'searching' : 'found');
-      setType(activeBooking.type);
-      setPickup(activeBooking.pickup);
-      setPickupCoords(activeBooking.pickupCoords);
-      setDropoff(activeBooking.dropoff);
-      setDropoffCoords(activeBooking.dropoffCoords);
-      setPayment(activeBooking.payment);
-      setFare({
-        min: activeBooking.fareAmount,
-        max: activeBooking.fareAmount,
-        amount: activeBooking.fareAmount,
-        display: activeBooking.fare
-      });
-      if (activeDriver) {
-        setDriver(activeDriver);
-        driverIdRef.current = activeDriver.driverId;
-      }
-      if (activeBooking.startOTP) setOtp(activeBooking.startOTP);
-      // FIX: Ensure OTP is saved to local storage
-
-      setActiveBooking({
-        id: activeBooking._id,
-        status: activeBooking.status,
-        type: activeBooking.type,
-        pickup: activeBooking.pickup,
-        pickupCoords: activeBooking.pickupCoords,
-        dropoff: activeBooking.dropoff,
-        dropoffCoords: activeBooking.dropoffCoords,
-        payment: activeBooking.payment,
-        fareAmount: activeBooking.fareAmount,
-        fare: activeBooking.fare,
-        driver: activeDriver,
-        eta: activeBooking.eta,
-        otp: activeBooking.startOTP, // Persist OTP to local storage
-      });
-
-      // ✅ ACCURATE TIMEOUT: Calculate remaining searching time
-      const createdAt = new Date(activeBooking.createdAt).getTime();
-      const elapsed = Math.floor((Date.now() - createdAt) / 1000);
-      const remaining = Math.max(0, TIMEOUT_SECONDS - elapsed);
-      
-      setupBookingListeners(activeBooking._id, activeBooking.status, remaining);
-    } catch (err) { /* handle */ }
-  })();
+        // Atomic update of state
+        setBookingId(b._id || b.id);
+        setBooking(b.status === 'searching' ? 'searching' : 'found');
+        setRideStatus(b.status);
+        if (b.startOTP) setOtp(b.startOTP);
+        if (b.driverId) {
+          const d = {
+            driverId: b.driverId._id,
+            name: b.driverId.name,
+            phone: b.driverId.phone,
+            vehicleNumber: b.driverId.vehicleNumber,
+            rating: b.driverId.rating,
+            eta: b.eta || '3–5 min'
+          };
+          setDriver(d);
+          driverIdRef.current = d.driverId;
+        }
+      } catch {}
+    };
+    syncActiveBooking();
   }, []);
 
   const updateActiveStatus = (status) => {
@@ -286,11 +215,11 @@ export default function BookRide() {
     if (current) setActiveBooking({ ...current, status });
   };
 
-  const handleBookingTermination = (finalStatus, message = '') => {
-    // Ensure all listeners are cleaned up via the consolidated ref
-    if (roomUnsubRef.current) roomUnsubRef.current();
-    roomUnsubRef.current = null; // BUG 16: Cleaned up redundant block
-
+  const handleBookingTermination = (finalStatus) => {
+    if (roomUnsubRef.current) {
+      roomUnsubRef.current();
+      roomUnsubRef.current = null;
+    }
     stopPolling();
     clearActiveBooking();
     setBooking(finalStatus);
@@ -303,112 +232,102 @@ export default function BookRide() {
     setFare(null);
   };
 
-  const setupBookingListeners = (id, initialStatus = 'searching', startCountdown = TIMEOUT_SECONDS) => {
-        const socket = connectSocket();
+  // Main Socket & State Lifecycle Effect
+  useEffect(() => {
+    if (!bookingId) return;
 
-        // 1. Cleanup previous refs
-        if (roomUnsubRef.current) roomUnsubRef.current();
+    const socket = connectSocket();
+
+    // 1. Rider Location Sharing
+    if (riderLocationWatchRef.current) riderLocationWatchRef.current();
+    riderLocationWatchRef.current = watchPosition(pos => {
+      emitRiderLocation({ 
+        bookingId, lat: pos.lat, lng: pos.lng, 
+        bearing: pos.bearing, speed: pos.speed 
+      });
+    });
+
+    // 2. Attach Driver Location Listener
+    const unsubLocation = onDriverLocationUpdate((data) => {
+      if (driverIdRef.current && String(driverIdRef.current) === String(data.driverId)) {
+        setDriverLocation({ lat: data.lat, lng: data.lng, bearing: data.bearing, speed: data.speed });
+      }
+    });
+
+    // 3. Attach Main Booking Handler
+    const unsubUpdate = onBookingUpdate(bookingId, (data) => {
+      setSocketDebug(d => [...d.slice(-9), { t: Date.now(), e: `socket:booking_update`, d: data }]);
+
+      if ((data.action === 'accept' || data.action === 'sync') && data.driver) {
+        playTada();
+        setDriver(data.driver);
+        driverIdRef.current = data.driver.driverId;
+        if (data.otp) setOtp(data.otp);
+        if (data.location || data.driver.location) setDriverLocation(data.location || data.driver.location);
         
-        // 2. Start location sharing
-        if (riderLocationWatchRef.current) riderLocationWatchRef.current();
-        riderLocationWatchRef.current = watchPosition(pos => {
-          emitRiderLocation({ 
-            bookingId: id, lat: pos.lat, lng: pos.lng, 
-            bearing: pos.bearing, speed: pos.speed 
-          });
-        });
-
-        // 3. Attach Driver Location Listener
-        const unsubLocation = onDriverLocationUpdate((data) => {
-          if (driverIdRef.current && String(driverIdRef.current) === String(data.driverId)) {
-            setDriverLocation({ lat: data.lat, lng: data.lng, bearing: data.bearing, speed: data.speed });
-          }
-        });
-
-        // 4. Attach Main Booking Handler (BEFORE joining room to catch replays)
-        const unsubUpdate = onBookingUpdate(id, (data) => {
-          setSocketDebug(d => [...d.slice(-9), { t: Date.now(), e: `booking:${id}`, d: data }]);
-          // Logic Upgrade: Uniform action handling for state transitions
-          if ((data.action === 'accept' || data.action === 'sync') && data.driver) {
-            playTada();
-            clearTimeout(timeoutRef.current); // BUG FIX: Kill the searching timeout
-            clearInterval(countdownRef.current);
-            setDriver(data.driver);
-            driverIdRef.current = data.driver.driverId;
-            if (data.otp) setOtp(data.otp);
-            
-            // Polished: Deep merge driver location into state immediately
-            if (data.location || data.driver.location) {
-              setDriverLocation(data.location || data.driver.location);
-            }
-            
-            setBooking('found');
-            setRideStatus('accepted');
-            
-            const currentBooking = getActiveBooking();
-            setActiveBooking({
-              ...(typeof currentBooking === 'object' && currentBooking ? currentBooking : {}),
-              status: 'accepted',
-              driver: data.driver,
-              otp: data.otp,
-            });
-            stopPolling();
-          } else if (data.action === 'started') {
-            if (data.driver) {
-               setDriver(data.driver);
-               driverIdRef.current = data.driver.driverId;
-            }
-            setBooking('found');
-            updateActiveStatus('started');
-          } else if (data.action === 'completed') {
-            handleBookingTermination('completed');
-            setRideStatus(null);
-          } else if (data.action === 'cancelled') {
-            handleBookingTermination('cancelled');
-          } else if (data.action === 'driver_arrived') {
-             // Potential for a non-blocking toast here
-             setSocketDebug(prev => [...prev, { t: Date.now(), e: 'info', d: 'Driver has arrived!' }]);
-          } else if (data.action === 'health_alert') {
-             // World-class UX: Log the monitoring status
-             setSocketDebug(prev => [...prev, { t: Date.now(), e: 'health_check', d: data.message }]);
-          } else if (data.action === 'driver_offline') {
-            handleBookingTermination('driver_offline');
-          }
-        });
-
-        // ✅ QUICK CONNECTION: Check if driver is already assigned before joining room
-        if (initialStatus === 'accepted' || initialStatus === 'started') {
-          startPolling(id); // Force an immediate data sync
+        setBooking('found');
+        setRideStatus('accepted');
+        stopPolling();
+      } else if (data.action === 'started') {
+        if (data.driver) {
+          setDriver(data.driver);
+          driverIdRef.current = data.driver.driverId;
         }
+        setBooking('found');
+        updateActiveStatus('started');
+      } else if (data.action === 'completed') {
+        handleBookingTermination('completed');
+      } else if (data.action === 'cancelled') {
+        handleBookingTermination('cancelled');
+      } else if (data.action === 'driver_offline') {
+        handleBookingTermination('driver_offline');
+      } else if (data.action === 'driver_arrived') {
+        setSocketDebug(prev => [...prev, { t: Date.now(), e: 'info', d: 'Driver has arrived!' }]);
+      } else if (data.action === 'health_alert') {
+        setSocketDebug(prev => [...prev, { t: Date.now(), e: 'health_check', d: data.message }]);
+      }
+    });
 
-        const roomUnsub = joinBookingRoom(id, getToken());
-        
-        // 5. Consolidate cleanup logic to prevent memory leaks
-        roomUnsubRef.current = () => {
-          unsubUpdate();
-          unsubLocation();
-          roomUnsub();
-          if (riderLocationWatchRef.current) {
-            riderLocationWatchRef.current();
-            riderLocationWatchRef.current = null;
+    const roomUnsub = joinBookingRoom(String(bookingId), getToken());
+
+    // 4. Searching Timeout Logic
+    let countdownInt = null;
+    if (booking === 'searching') {
+      countdownInt = setInterval(() => {
+        setCountdown(prev => {
+          if (prev <= 1) {
+            clearInterval(countdownInt);
+            handleBookingTermination('timeout');
+            api.cancelBooking(bookingId, getToken()).catch(() => {});
+            return 0;
           }
-        };
+          return prev - 1;
+        });
+      }, 1000);
+    }
 
-        // 6. Accurate Searching Timeout Logic
-        if (initialStatus === 'searching' && !timeoutRef.current) {
-          setCountdown(startCountdown);
-          countdownRef.current = setInterval(() => {
-            setCountdown(prev => (prev <= 1 ? 0 : prev - 1));
-          }, 1000);
+    // Polished Polling Fallback
+    startPolling(bookingId);
 
-          timeoutRef.current = setTimeout(async () => {
-            if (roomUnsubRef.current) roomUnsubRef.current();
-            try { await api.cancelBooking(id, getToken()); } catch {}
-            clearActiveBooking();
-            setBooking('timeout');
-          }, startCountdown * 1000);
-        }
-  };
+    roomUnsubRef.current = () => {
+      unsubUpdate();
+      unsubLocation();
+      roomUnsub();
+      if (countdownInt) clearInterval(countdownInt);
+      if (riderLocationWatchRef.current) {
+        riderLocationWatchRef.current();
+        riderLocationWatchRef.current = null;
+      }
+    };
+
+    return () => {
+      if (roomUnsubRef.current) {
+        roomUnsubRef.current();
+        roomUnsubRef.current = null;
+      }
+      stopPolling();
+    };
+  }, [bookingId, booking]);
 
   // ✅ UBER-STYLE POLLING: self-heal if socket events are missed
   // This is a fallback for when socket events are missed or the app is restored.
@@ -464,19 +383,6 @@ export default function BookRide() {
     })();
   }, [pickupCoords, dropoffCoords, type]);
 
-  useEffect(() => {
-    return () => {
-      if (roomUnsubRef.current) {
-        roomUnsubRef.current();
-        roomUnsubRef.current = null;
-      }
-      // ✅ MEMORY LEAK FIX: Clear all background processes
-      if (pollRef.current) clearInterval(pollRef.current);
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-      if (countdownRef.current) clearInterval(countdownRef.current);
-    };
-  }, [bookingId]);
-
   // ── Create booking + start driver search ─────────────────────
   const startBooking = async () => {
     playWhoosh();
@@ -505,9 +411,6 @@ export default function BookRide() {
         payment, fareAmount, fare: bk.fare, 
         otp: b.otp,
       });
-      setupBookingListeners(b.id, b.status);
-      // ✅ PROACTIVE SYNC: Start polling immediately to catch quick driver accepts
-      startPolling(b.id);
     } catch (err) {
       setBooking(null);
       setPayLoading(false);

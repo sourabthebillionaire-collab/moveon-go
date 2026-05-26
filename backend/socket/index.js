@@ -77,6 +77,7 @@ module.exports = function initSocket(io) {
       }
 
       socket.join(`booking:${bId}`);
+      socket.join(`user:${userId}`); // Ensure user is also in a private room
       logger.info(`[Socket] Rider ${userId} joined room booking:${bId}`);
 
       // ✅ SESSION RECOVERY: Restore tracking state from DB if memory maps are empty (e.g. server restart)
