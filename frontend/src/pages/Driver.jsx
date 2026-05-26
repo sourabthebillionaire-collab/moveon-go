@@ -408,9 +408,11 @@ export default function Driver() {
       const driverId = d.id || d._id;
 
       const handleReconnect = () => {
-        socket.emit('driver:register', { driverId, vehicleType: d.vehicleType, token });
+        const savedDriver = getDriver();
+        const type = savedDriver?.vehicleType || d.vehicleType;
+        socket.emit('driver:register', { driverId, vehicleType: type, token });
         setSocketConnected(true);
-        setSocketDebug(d => [...d.slice(-9), { t: Date.now(), e: 'socket:register_success', d: { driverId, vehicleType: d.vehicleType } }]);
+        setSocketDebug(prev => [...prev.slice(-9), { t: Date.now(), e: 'socket:register_attempt', d: { type } }]);
       };
 
       if (socket.connected) {
@@ -624,12 +626,12 @@ export default function Driver() {
   useEffect(() => {
     if (!onDuty) return;
     const unsub = onRideRequest(req => {
-      // Suppress new ride requests if driver already has an active ride
       const currentRide = activeRideRef.current;
+      // Suppress new ride requests if driver already has an active ride
       if (currentRide && ['accepted', 'started'].includes(currentRide.status)) return;
 
       setRideReq(req);
-      setSocketDebug(d => [...d.slice(-9), { t: Date.now(), e: 'ride:request_received', d: req }]);
+      setSocketDebug(d => [...d.slice(-9), { t: Date.now(), e: 'socket:ride_request', d: req }]);
       speak(
         lang === 'hi' ? 'नई बुकिंग आई है।' :
         lang === 'or' ? 'ନୂଆ ବୁକିଂ ଆସିଛି।' :
@@ -638,7 +640,7 @@ export default function Driver() {
       );
     });
     return unsub; // Cleanup function
-  }, [onDuty, lang, activeRideRef.current]); // Added activeRideRef.current to deps
+  }, [onDuty, lang]); 
 
   useEffect(() => {
     const socket = getSocket();

@@ -179,11 +179,12 @@ module.exports = function initSocket(io) {
       connectedDrivers.set(socket.id, dId);
       socket.join(`driver:${dId}`);
       
-      // ✅ DISPATCH: Join a room for their vehicle type to receive ride requests
+      // ✅ DISPATCH ROOM: Must be lowercase to match bookings.js
       if (vehicleType) {
-        const roomName = `drivers:${String(vehicleType).toLowerCase()}`;
+        const typeStr = String(vehicleType).trim().toLowerCase();
+        const roomName = `drivers:${typeStr}`;
         socket.join(roomName);
-        logger.info(`[Socket] Driver ${dId} joined dispatch pool: drivers:${vehicleType}`);
+        logger.info(`[Socket] Driver ${dId} joined dispatch pool: ${roomName}`);
       }
 
       // ✅ RECOVERY: Restore active booking mapping if driver is already mid-trip

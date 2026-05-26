@@ -188,11 +188,14 @@ export default function BookRide() {
         setCountdown(remaining);
 
         // Atomic update of state
-        setBookingId(b._id || b.id); // Ensure consistent ID usage
-        setBooking(b.status === 'searching' ? 'searching' : 'found');
+        // Atomic update of state
+        const isSearching = b.status === 'searching';
+        setBookingId(b._id || b.id);
+        setBooking(isSearching ? 'searching' : 'found');
         setRideStatus(b.status);
+
         if (b.startOTP) setOtp(b.startOTP);
-        if (b.driverId) {
+        if (b.driverId && !isSearching) {
           const d = {
             driverId: b.driverId._id,
             name: b.driverId.name,
@@ -216,10 +219,10 @@ export default function BookRide() {
   };
 
   const handleBookingTermination = (finalStatus) => {
-    if (roomUnsubRef.current) {
-      roomUnsubRef.current();
-      roomUnsubRef.current = null;
-    }
+    stopPolling();
+    if (roomUnsubRef.current) roomUnsubRef.current();
+    roomUnsubRef.current = null;
+    
     stopPolling();
     clearActiveBooking();
     setBooking(finalStatus);
@@ -258,17 +261,17 @@ export default function BookRide() {
     const unsubUpdate = onBookingUpdate(bookingId, (data) => {
       setSocketDebug(d => [...d.slice(-9), { t: Date.now(), e: `booking_event:${data.action}`, d: data }]);
 
-      // ✅ STRICT SYNC: Only transition to 'found' if the action is a fresh 'accept' or a 'sync'
-      // that contains a valid, currently assigned driver. Ensure driver.name exists for UI.
-      if ((data.action === 'accept' || data.action === 'sync') && data.driver?.name) {
+      // ✅ VITAL: Only show 'found' if the backend explicitly confirms 'accept'
+      // or if a 'sync' happens for an already accepted ride.
+      if (data.action === 'accept' && data.driver?.name) {
         playTada();
         setDriver(data.driver);
         driverIdRef.current = data.driver.driverId;
         if (data.otp) setOtp(data.otp);
         if (data.location || data.driver.location) setDriverLocation(data.location || data.driver.location);
-        
-        setBooking('found');
+
         setRideStatus('accepted');
+        setBooking('found');
         stopPolling();
       } else if (data.action === 'started') {
         if (data.driver) {
@@ -292,22 +295,6 @@ export default function BookRide() {
 
     const roomUnsub = joinBookingRoom(String(bookingId), getToken());
 
-    // 4. Searching Timeout Logic
-    let countdownInt = null;
-    if (booking === 'searching') {
-      countdownInt = setInterval(() => {
-        setCountdown(prev => {
-          if (prev <= 1) {
-            clearInterval(countdownInt);
-            handleBookingTermination('timeout');
-            api.cancelBooking(bookingId, getToken()).catch(() => {});
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
-    }
-
     // Polished Polling Fallback
     startPolling(bookingId);
 
@@ -315,7 +302,6 @@ export default function BookRide() {
       unsubUpdate();
       unsubLocation();
       roomUnsub();
-      if (countdownInt) clearInterval(countdownInt);
       if (riderLocationWatchRef.current) {
         riderLocationWatchRef.current();
         riderLocationWatchRef.current = null;
@@ -329,7 +315,25 @@ export default function BookRide() {
       }
       stopPolling();
     };
-  }, [bookingId, booking]);
+  }, [bookingId]);
+
+  // 4. Separate Searching Timeout Logic to prevent socket thrashing
+  useEffect(() => {
+    if (booking !== 'searching' || !bookingId) return;
+    
+    const countdownInt = setInterval(() => {
+      setCountdown(prev => {
+        if (prev <= 1) {
+          clearInterval(countdownInt);
+          handleBookingTermination('timeout');
+          api.cancelBooking(bookingId, getToken()).catch(() => {});
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(countdownInt);
+  }, [booking, bookingId]);
 
   // ✅ UBER-STYLE POLLING: self-heal if socket events are missed
   // This is a fallback for when socket events are missed or the app is restored.
