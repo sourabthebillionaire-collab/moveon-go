@@ -255,17 +255,16 @@ export default function Driver() {
         socket.off('driver:kicked');
         socket.off('connect');
 
-        if (socket.connected) {
-          socket.emit('driver:register', { driverId, vehicleType });
-        }
-
         // FIX #11: Re-register on every reconnect so driver stays in their
         // personal room through socket disconnects. Previously registered once
         // on mount — after any reconnect the driver missed kicked/offline events.
         const handleReconnect = () => {
-          socket.emit('driver:register', { driverId, vehicleType });
-          console.log('[Driver] Re-registered after reconnect');
+          const token = getDriverToken();
+          socket.emit('driver:register', { driverId, vehicleType, token });
+          console.log('[Driver] Registered with server:', driverId);
         };
+
+        if (socket.connected) handleReconnect();
         socket.on('connect', handleReconnect);
 
         socket.on('driver:kicked', ({ reason }) => {

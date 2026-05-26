@@ -178,9 +178,11 @@ module.exports = function initSocket(io) {
 
       connectedDrivers.set(socket.id, dId);
       socket.join(`driver:${dId}`);
-      // ✅ PERFORMANCE: Join a room for their vehicle type for targeted dispatching
-      if (vehicleType) socket.join(`drivers:${vehicleType}`);
-      console.log(`[Socket] Driver registered: ${driverId}`);
+      // ✅ DISPATCH: Join a room for their vehicle type to receive ride requests
+      if (vehicleType) {
+        socket.join(`drivers:${vehicleType}`);
+        logger.info(`[Socket] Driver ${dId} joined dispatch pool: drivers:${vehicleType}`);
+      }
     });
 
     // ── Driver: location broadcast ─────────────────────────────

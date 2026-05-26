@@ -256,9 +256,10 @@ export default function BookRide() {
 
     // 3. Attach Main Booking Handler
     const unsubUpdate = onBookingUpdate(bookingId, (data) => {
-      setSocketDebug(d => [...d.slice(-9), { t: Date.now(), e: `socket:booking_update`, d: data }]);
+      setSocketDebug(d => [...d.slice(-9), { t: Date.now(), e: `booking_event:${data.action}`, d: data }]);
 
-      if ((data.action === 'accept' || data.action === 'sync') && data.driver) {
+      // Ensure we actually have driver data before flipping the UI to 'found'
+      if ((data.action === 'accept' || data.action === 'sync') && data.driver?.name) {
         playTada();
         setDriver(data.driver);
         driverIdRef.current = data.driver.driverId;
