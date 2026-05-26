@@ -24,18 +24,25 @@ function vehicleIcon(v) {
   const bg = colors[type] || colors.bus;
   // FIX: Show route number on marker for buses, otherwise vehicle type
   const label = (type === 'bus' && v.routeNumber) ? v.routeNumber : type.toUpperCase();
+  // Added: Rotation based on bearing for better spatial awareness
+  const rotation = v.bearing || 0;
+
   return L.divIcon({
-    className: '',
-    html: `<div style="background:${bg};color:#fff;font-size:10px;font-weight:700;padding:4px 8px;border-radius:6px;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.25);font-family:Inter,sans-serif;border:1.5px solid rgba(255,255,255,0.3)">${label}</div>`,
+    className: 'vehicle-marker-glide',
+    html: `<div class="marker-interpolated" style="transform: rotate(${rotation}deg); background:${bg};color:#fff;font-size:10px;font-weight:700;padding:4px 8px;border-radius:6px;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.25);font-family:Inter,sans-serif;border:1.5px solid rgba(255,255,255,0.3); transition: all 0.5s linear;">${label}</div>`,
     iconAnchor: [22, 14], popupAnchor: [0, -16],
   });
 }
 
 function userIcon() {
   return L.divIcon({
-    className: '',
-    html: `<div style="width:14px;height:14px;background:#1565C0;border:2.5px solid #fff;border-radius:50%;box-shadow:0 2px 8px rgba(0,0,0,0.3)"></div>`,
-    iconAnchor: [7, 7],
+    className: 'user-marker-container',
+    html: `
+      <div class="user-marker-pulse"></div>
+      <div class="user-marker-dot"></div>
+    `,
+    iconSize: [30, 30],
+    iconAnchor: [15, 15],
   });
 }
 
@@ -45,6 +52,8 @@ export default function MapView() {
   const markersRef  = useRef({});
   const routeRef    = useRef(null);
   const timestampsRef = useRef({}); // FIX: Track data freshness per vehicle
+  const userPosRef  = useRef(null); // FIX: Latest user location for socket callbacks
+  const focusRef    = useRef(null); // FIX: Prevent race conditions in focusVehicle
   const userMkrRef  = useRef(null);
 
   const [vehicles,    setVehicles]    = useState([]);
@@ -54,13 +63,22 @@ export default function MapView() {
   const [loadRoute,   setLoadRoute]   = useState(false);
   const [filter,      setFilter]      = useState('all');
   const [loading,     setLoading]     = useState(true);
+  
+  // ✅ Persistent state to keep data visible during the slide-down animation
+  const [displayVehicle, setDisplayVehicle] = useState(null);
+  useEffect(() => {
+    if (selected) setDisplayVehicle(selected);
+  }, [selected]);
+
   const routeState = useLocation().state || {};
   const navigate = useNavigate();
+
+  const DEFAULT_CENTER = [20.296, 85.824]; // Move to config/env eventually
 
   // Init map
   useEffect(() => {
     if (mapInst.current) return;
-    const map = L.map(mapRef.current, { center: [20.296, 85.824], zoom: 13, zoomControl: false });
+    const map = L.map(mapRef.current, { center: DEFAULT_CENTER, zoom: 13, zoomControl: false });
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '© OpenStreetMap contributors', maxZoom: 19,
     }).addTo(map);
@@ -73,6 +91,7 @@ export default function MapView() {
   useEffect(() => {
     const unsub = watchPosition(pos => {
       setUserPos(pos);
+      userPosRef.current = pos;
       const map = mapInst.current;
       if (!map) return;
       if (userMkrRef.current) {
@@ -128,7 +147,8 @@ export default function MapView() {
 
     // Tell server we're a rider — it will send back all active vehicles immediately
     const announce = () => {
-      socket.emit('rider:connected');
+      const pos = userPosRef.current;
+      socket.emit('rider:connected', pos ? { lat: pos.lat, lng: pos.lng } : null);
     };
 
     if (socket.connected) announce();
@@ -148,7 +168,8 @@ export default function MapView() {
         addOrUpdateMarker(vehicle);
       }
       setVehicles(prev => {
-        const exists = prev.find(v => v.id === vehicle.id);
+        const vid = String(vehicle.id);
+        const exists = prev.find(v => String(v.id) === vid);
         if (exists) return prev.map(v => v.id === vehicle.id ? { ...v, ...vehicle } : v);
         return [...prev, vehicle];
       });
@@ -165,7 +186,19 @@ export default function MapView() {
         delete timestampsRef.current[id];
       }
       setVehicles(prev => prev.filter(v => String(v.id) !== id));
-      setSelected(s => s && String(s.id) === id ? null : s);
+      
+      // FIX: If selected vehicle goes offline, clear local state and polyline
+      setSelected(s => {
+        if (s && String(s.id) === id) {
+          if (routeRef.current && mapInst.current) {
+            mapInst.current.removeLayer(routeRef.current);
+            routeRef.current = null;
+          }
+          setRouteInfo(null);
+          return null;
+        }
+        return s;
+      });
     });
 
     return () => {
@@ -196,19 +229,18 @@ export default function MapView() {
     
     // FIX: Freshness Check. Only update if data is newer than current marker
     const lastTs = timestampsRef.current[id] || 0;
-    const newTs  = v.ts || Date.now();
+    const newTs  = v.ts || lastTs + 1; // BUG 6: Avoid using Date.now() as fallback for ordering
     if (newTs < lastTs) return; 
     timestampsRef.current[id] = newTs;
 
     if (existing) {
-      // FIX #18: Add tiny jitter to prevent perfect marker overlap at depots
-      const jitter = (Math.random() - 0.5) * 0.0001;
-      existing.setLatLng([v.lat + jitter, v.lng + jitter]);
+      // Polished: Use direct setLatLng. The CSS transition 'marker-interpolated' 
+      // in MapView.css will handle the visual glide.
+      existing.setLatLng([v.lat, v.lng]);
       existing.setPopupContent(buildPopup(v));
       existing.setIcon(vehicleIcon(v)); // Ensure icon labels update
     } else {
-      const jitter = (Math.random() - 0.5) * 0.0001;
-      const m = L.marker([v.lat + jitter, v.lng + jitter], { icon: vehicleIcon(v) })
+      const m = L.marker([v.lat, v.lng], { icon: vehicleIcon(v) })
         .addTo(map)
         .on('click', () => focusVehicle(v));
       m.bindPopup(buildPopup(v));
@@ -227,10 +259,19 @@ export default function MapView() {
       ${v.vehicleNumber ? `<div style="color:#94A3B8;font-size:11px;margin-bottom:4px">${v.vehicleNumber}</div>` : ''}
       ${route ? `<div style="color:#374151;font-size:12px;margin-bottom:2px">🛣 ${routeNo}${route}</div>` : ''}
       <div style="color:#6B7280">⚡ ${v.speed || 0} km/h &nbsp;·&nbsp; ${v.status || 'Active'}</div>
+      <div style="margin-top:8px; border-top:1px solid #eee; padding-top:8px;">
+        <a href="https://www.openstreetmap.org/?mlat=${v.lat}&mlon=${v.lng}#map=16/${v.lat}/${v.lng}" 
+           target="_blank" 
+           style="display:block; background:#0D47A1; color:white; text-align:center; padding:6px; border-radius:4px; text-decoration:none; font-weight:700; font-size:11px;">
+           View on OSM ↗
+        </a>
+      </div>
     </div>`;
   }
 
   async function focusVehicle(v) {
+    const vid = String(v.id);
+    focusRef.current = vid;
     setSelected(v);
     setLoadRoute(true);
     setRouteInfo(null);
@@ -238,23 +279,27 @@ export default function MapView() {
     if (map) map.flyTo([v.lat, v.lng], 15, { duration: 1 });
 
     if (!userPos) {
-      alert('Still detecting your location. Please wait a moment...');
-      setLoadRoute(false);
+      setLoadRoute(false); // BUG 7: Fixed stuck spinner
       return;
     }
 
     const route = await getRoute(userPos, { lat: v.lat, lng: v.lng });
 
-    if (route && map) {
-      if (routeRef.current) map.removeLayer(routeRef.current);
-      routeRef.current = L.polyline(route.coordinates, {
-        color: '#1565C0', weight: 4, opacity: 0.8,
-        lineJoin: 'round', lineCap: 'round',
-      }).addTo(map);
-      map.fitBounds(L.latLngBounds([[userPos.lat, userPos.lng], [v.lat, v.lng]]).pad(0.2));
-      setRouteInfo(route);
+    // RACE CONDITION FIX: Only update UI if the user hasn't selected another vehicle during the await
+    if (focusRef.current === vid && map) {
+      if (route) {
+        if (routeRef.current) map.removeLayer(routeRef.current);
+        routeRef.current = L.polyline(route.coordinates, {
+          color: '#1565C0', weight: 4, opacity: 0.8,
+          lineJoin: 'round', lineCap: 'round',
+        }).addTo(map);
+        map.fitBounds(L.latLngBounds([[userPos.lat, userPos.lng], [v.lat, v.lng]]).pad(0.2));
+        setRouteInfo(route);
+      }
+      // Ensure popup is opened only for the currently focused marker
+      if (markersRef.current[vid]) markersRef.current[vid].openPopup(); // BUG 8: Guard marker ref
     }
-    markersRef.current[String(v.id)]?.openPopup();
+
     setLoadRoute(false);
   }
 
@@ -263,7 +308,7 @@ export default function MapView() {
   return (
     <div className="app">
       <Header title="Live Map" />
-      <div className="map-page">
+      <div className="map-page" style={{ position: 'relative' }}>
 
         {/* Filter bar */}
         <div className="map-filters">
@@ -276,6 +321,27 @@ export default function MapView() {
 
         {/* Map */}
         <div ref={mapRef} className="map-canvas" />
+
+        {/* ✅ Loading Overlay: Smooth transition when fading out */}
+        <div style={{
+          position: 'absolute',
+          inset: 0,
+          zIndex: 1001,
+          background: 'rgba(255,255,255,0.8)',
+          backdropFilter: 'blur(4px)',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 12,
+          opacity: loading ? 1 : 0,
+          visibility: loading ? 'visible' : 'hidden',
+          pointerEvents: loading ? 'auto' : 'none',
+          transition: 'opacity 0.5s ease, visibility 0.5s'
+        }}>
+          <span className="spinner" style={{ width: 32, height: 32, borderWidth: 3 }} />
+          <p style={{ fontSize: 14, fontWeight: 600, color: 'var(--gray-600)', margin: 0 }}>Fetching live vehicles...</p>
+        </div>
 
         {/* Bottom panel */}
         <div className="map-panel">
@@ -298,61 +364,67 @@ export default function MapView() {
             </div>
           )}
 
-          {loading && (
-            <div style={{display:'flex',alignItems:'center',gap:10,padding:'0 16px 10px',color:'var(--gray-400)',fontSize:13}}>
-              <span className="spinner" style={{width:16,height:16,borderWidth:2}}/>
-              Locating nearby vehicles...
-            </div>
-          )}
-
-          {selected && (
-            <div className="map-detail slide-up">
-              <div className="map-detail__row">
-                <div className="map-detail__badge">{selected.type?.toUpperCase()}</div>
-                <div className="map-detail__info">
-                  <div className="map-detail__num">{selected.vehicleNumber || selected.number}</div>
-                  {selected.from && selected.to && (
-                    <div className="map-detail__route">{selected.from} → {selected.to}</div>
-                  )}
-                  <div className="map-detail__status">
-                    <span className="live-dot" style={{width:6,height:6}}/>
-                    {selected.status || 'Active'} · {selected.speed || 0} km/h
+          {/* ✅ Detail Card: Now uses opacity and transform for a smooth slide-up effect */}
+          <div 
+            className="map-detail" 
+            style={{
+              display: displayVehicle ? 'block' : 'none',
+              opacity: selected ? 1 : 0,
+              transform: selected ? 'translateY(0)' : 'translateY(20px)',
+              visibility: selected ? 'visible' : 'hidden',
+              pointerEvents: selected ? 'auto' : 'none',
+              transition: 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)'
+            }}
+          >
+            {displayVehicle && (
+              <>
+                <div className="map-detail__row">
+                  <div className="map-detail__badge">{displayVehicle.type?.toUpperCase()}</div>
+                  <div className="map-detail__info">
+                    <div className="map-detail__num">{displayVehicle.vehicleNumber || displayVehicle.number}</div>
+                    {displayVehicle.from && displayVehicle.to && (
+                      <div className="map-detail__route">{displayVehicle.from} → {displayVehicle.to}</div>
+                    )}
+                    <div className="map-detail__status">
+                      <span className="live-dot" style={{width:6,height:6}}/>
+                      {displayVehicle.status || 'Active'} · {displayVehicle.speed || 0} km/h
+                    </div>
                   </div>
+                  {loadRoute ? (
+                    <span className="spinner" style={{width:20,height:20}}/>
+                  ) : routeInfo ? (
+                    <div className="map-detail__eta">
+                      <div className="map-detail__eta-val">{fmtDuration(routeInfo.duration)}</div>
+                      <div className="map-detail__eta-dist">{fmtDist(routeInfo.distance)}</div>
+                    </div>
+                  ) : null}
                 </div>
-                {loadRoute ? (
-                  <span className="spinner" style={{width:20,height:20}}/>
-                ) : routeInfo ? (
-                  <div className="map-detail__eta">
-                    <div className="map-detail__eta-val">{fmtDuration(routeInfo.duration)}</div>
-                    <div className="map-detail__eta-dist">{fmtDist(routeInfo.distance)}</div>
-                  </div>
-                ) : null}
-              </div>
 
-              {selected.type === 'bus' && typeof selected.passengers === 'number' && (
-                <div className="map-detail__occ">
-                  <div className="map-detail__occ-bar">
-                    <div className="map-detail__occ-fill"
-                      style={{width:`${Math.min(100,Math.round((selected.passengers/selected.capacity||60)*100))}%`,
-                      background: selected.passengers/selected.capacity > 0.8 ? 'var(--danger)' : 'var(--green-600)'}}/>
+                {displayVehicle.type === 'bus' && typeof displayVehicle.passengers === 'number' && (
+                  <div className="map-detail__occ">
+                    <div className="map-detail__occ-bar">
+                      <div className="map-detail__occ-fill"
+                        style={{width:`${Math.min(100,Math.round((displayVehicle.passengers/displayVehicle.capacity||60)*100))}%`,
+                        background: displayVehicle.passengers/displayVehicle.capacity > 0.8 ? 'var(--danger)' : 'var(--green-600)'}}/>
+                    </div>
+                    <span>{displayVehicle.passengers}/{displayVehicle.capacity} passengers</span>
                   </div>
-                  <span>{selected.passengers}/{selected.capacity} passengers</span>
-                </div>
-              )}
-
-              <div className="map-detail__actions">
-                <button className="btn btn--secondary" style={{flex:1}} onClick={() => focusVehicle(selected)}>
-                  Show Route
-                </button>
-                {selected.type !== 'bus' && (
-                  <button className="btn btn--primary" style={{flex:1}}
-                    onClick={() => navigate(`/book?type=${selected.type}&vehicleId=${selected.id}`)}>
-                    Book Now
-                  </button>
                 )}
-              </div>
-            </div>
-          )}
+
+                <div className="map-detail__actions">
+                  <button className="btn btn--secondary" style={{flex:1}} onClick={() => focusVehicle(displayVehicle)}>
+                    Show Route
+                  </button>
+                  {displayVehicle.type !== 'bus' && (
+                    <button className="btn btn--primary" style={{flex:1}}
+                      onClick={() => navigate(`/book?type=${displayVehicle.type}&vehicleId=${displayVehicle.id}`)}>
+                      Book Now
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
       <BottomNav />

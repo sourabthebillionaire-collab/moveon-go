@@ -1,4 +1,4 @@
-/* ── BookRide.jsx — with Razorpay ── */
+/* ── BookRide.jsx — with UPI Intent ── */
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import Header from '../components/Header';
@@ -7,11 +7,118 @@ import PlaceSearch from '../components/PlaceSearch';
 import { getCurrentPosition, reverseGeocode, watchPosition } from '../services/geocoding';
 import { getRoute, calcFare, fmtDist, fmtDuration } from '../services/routing';
 import api from '../services/api';
-import { connectSocket, getSocket, emitRiderLocation, joinBookingRoom } from '../services/socket';
+import { connectSocket, getSocket, emitRiderLocation, joinBookingRoom, onBookingUpdate, onDriverLocationUpdate } from '../services/socket';
 import { addBooking, getToken, getActiveBooking, setActiveBooking, clearActiveBooking } from '../services/storage';
 import './BookRide.css';
 
-const RAZORPAY_KEY_ID = import.meta.env.VITE_RAZORPAY_KEY_ID || 'rzp_test_SqiUHd7YtEIDor';
+// Subtle UI click sound helper
+const playPop = () => {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(500, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
+    g.gain.setValueAtTime(0.1, ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
+    osc.connect(g);
+    g.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.1);
+  } catch (e) { /* ignore audio errors */ }
+};
+
+// Subtle UI whoosh sound helper for radar search
+const playWhoosh = () => {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(150, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(800, ctx.currentTime + 0.2);
+    osc.frequency.exponentialRampToValueAtTime(150, ctx.currentTime + 0.5);
+    g.gain.setValueAtTime(0, ctx.currentTime);
+    g.gain.linearRampToValueAtTime(0.15, ctx.currentTime + 0.1);
+    g.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+    osc.connect(g);
+    g.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.5);
+  } catch (e) { /* ignore audio errors */ }
+};
+
+// GenZ Confetti Cannon - Zero dependencies
+const triggerConfetti = () => {
+  const colors = ['#0D47A1', '#1565C0', '#00A046', '#FFCA28', '#DC2626'];
+  const container = document.createElement('div');
+  container.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:9999;';
+  document.body.appendChild(container);
+
+  for (let i = 0; i < 60; i++) {
+    const el = document.createElement('div');
+    const color = colors[Math.floor(Math.random() * colors.length)];
+    el.style.cssText = `position:absolute;width:10px;height:10px;background:${color};left:50%;bottom:-20px;border-radius:${Math.random() > 0.5 ? '50%' : '2px'};opacity:1;`;
+    container.appendChild(el);
+
+    const angle = (Math.random() * 100 - 50) * (Math.PI / 180);
+    const velocity = Math.random() * 25 + 15;
+    let x = 0, y = 0;
+    let vx = Math.sin(angle) * velocity;
+    let vy = -Math.cos(angle) * velocity;
+    const gravity = 0.7;
+
+    const update = () => {
+      vy += gravity;
+      vx *= 0.98;
+      vy *= 0.98;
+      x += vx;
+      y += vy;
+      el.style.transform = `translate(${x}px, ${y}px) rotate(${x * 4}deg)`;
+      
+      if (y < window.innerHeight + 100) {
+        requestAnimationFrame(update);
+      } else {
+        el.remove();
+      }
+    };
+    requestAnimationFrame(update);
+  }
+
+  setTimeout(() => container.remove(), 4000);
+};
+
+// Subtle UI tada sound helper for driver found
+const playTada = () => {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const now = ctx.currentTime;
+
+    const playNote = (freq, start, duration, volume = 0.1) => {
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(freq, start);
+      g.gain.setValueAtTime(0, start);
+      g.gain.linearRampToValueAtTime(volume, start + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.01, start + duration);
+      osc.connect(g);
+      g.connect(ctx.destination);
+      osc.start(start);
+      osc.stop(start + duration);
+    };
+
+    playNote(440, now, 0.12, 0.08);       // Note 1: A4 (low)
+    playNote(659.25, now + 0.12, 0.6, 0.1); // Note 2: E5 (high, triumphant)
+
+    // Vibration pattern: [Note 1 pulse, Gap, Note 2 pulse]
+    window.navigator?.vibrate?.([40, 80, 150]);
+
+    // Visual celebration
+    triggerConfetti();
+  } catch (e) { /* ignore audio errors */ }
+};
 
 const TYPES = [
   { id: 'auto', label: 'Auto Rickshaw', cap: 'Up to 3 passengers', eta: '3–6 min', emoji: '🛺' },
@@ -20,17 +127,6 @@ const TYPES = [
 ];
 
 const TIMEOUT_SECONDS = 60;
-
-function loadRazorpay() {
-  return new Promise(resolve => {
-    if (window.Razorpay) { resolve(true); return; }
-    const s = document.createElement('script');
-    s.src = 'https://checkout.razorpay.com/v1/checkout.js';
-    s.onload  = () => resolve(true);
-    s.onerror = () => resolve(false);
-    document.body.appendChild(s);
-  });
-}
 
 export default function BookRide() {
   const navigate = useNavigate();
@@ -53,6 +149,9 @@ export default function BookRide() {
   const [socketDebug, setSocketDebug] = useState([]);
   const [countdown,     setCountdown]     = useState(TIMEOUT_SECONDS);
   const [payLoading,    setPayLoading]    = useState(false);
+  const [rideStatus,    setRideStatus]    = useState(null);
+  const [showQr,       setShowQr]       = useState(false);
+  const [isBoarded,    setIsBoarded]    = useState(false);
 
   const driverIdRef            = useRef(null);
   const driverLocationRef      = useRef(null);
@@ -70,45 +169,44 @@ export default function BookRide() {
         setPickup(await reverseGeocode(pos.lat, pos.lng));
       } catch { setPickup('Current Location'); }
     })();
-    loadRazorpay(); // preload
   }, []);
 
   // ── Restore active booking on mount ─────────────────────────
   useEffect(() => {
     (async () => {
       try {
-const storedBooking = getActiveBooking();
-      if (!storedBooking) return;
+        const storedBooking = getActiveBooking();
+        if (!storedBooking) return;
 
-      // Restore immediately from localStorage so accepted booking remains visible
-      const initialBooking = typeof storedBooking === 'string'
-        ? { id: storedBooking }
-        : storedBooking;
+        // Restore immediately from localStorage so accepted booking remains visible
+        const initialBooking = typeof storedBooking === 'string'
+          ? { id: storedBooking }
+          : storedBooking;
 
-      if (initialBooking.id || initialBooking._id) {
-        setBookingId(initialBooking._id || initialBooking.id);
-        setBooking(['accepted', 'started'].includes(initialBooking.status) ? 'found' : 'searching');
-        setType(initialBooking.type || type);
-        setPickup(initialBooking.pickup || pickup);
-        setPickupCoords(initialBooking.pickupCoords || pickupCoords);
-        setDropoff(initialBooking.dropoff || dropoff);
-        setDropoffCoords(initialBooking.dropoffCoords || dropoffCoords);
-        setPayment(initialBooking.payment || payment);
-        if (initialBooking.fareAmount != null) {
-          setFare({
-            min: initialBooking.fareAmount,
-            max: initialBooking.fareAmount,
-            amount: initialBooking.fareAmount,
-            display: initialBooking.fare || `₹${initialBooking.fareAmount}`
-          });
+        if (initialBooking.id || initialBooking._id) {
+          setBookingId(initialBooking._id || initialBooking.id);
+          setBooking(['accepted', 'started'].includes(initialBooking.status) ? 'found' : 'searching');
+          setRideStatus(initialBooking.status);
+          setType(initialBooking.type || type);
+          setPickup(initialBooking.pickup || pickup);
+          setPickupCoords(initialBooking.pickupCoords || pickupCoords);
+          setDropoff(initialBooking.dropoff || dropoff);
+          setDropoffCoords(initialBooking.dropoffCoords || dropoffCoords);
+          setPayment(initialBooking.payment || payment);
+          if (initialBooking.fareAmount != null) {
+            setFare({
+              min: initialBooking.fareAmount,
+              max: initialBooking.fareAmount,
+              amount: initialBooking.fareAmount,
+              display: initialBooking.fare || `₹${initialBooking.fareAmount}`
+            });
+          }
+          if (initialBooking.driver) {
+            setDriver(initialBooking.driver);
+            driverIdRef.current = initialBooking.driver.driverId;
+          }
+          if (initialBooking.otp) setOtp(initialBooking.otp);
         }
-        if (initialBooking.driver) {
-          setDriver(initialBooking.driver);
-          driverIdRef.current = initialBooking.driver.driverId || initialBooking.driver.driverId;
-        }
-      }
-      // FIX: Ensure OTP is restored from local storage if available
-      if (initialBooking.otp) setOtp(initialBooking.otp);
 
       const result = await api.getActiveBooking(getToken());
       const activeBooking = result?.booking;
@@ -173,36 +271,32 @@ const storedBooking = getActiveBooking();
         otp: activeBooking.startOTP, // Persist OTP to local storage
       });
 
-      // BUG FIX: Consolidate listener setup to ensure one source of truth
-      setupBookingListeners(activeBooking._id);
+      // ✅ ACCURATE TIMEOUT: Calculate remaining searching time
+      const createdAt = new Date(activeBooking.createdAt).getTime();
+      const elapsed = Math.floor((Date.now() - createdAt) / 1000);
+      const remaining = Math.max(0, TIMEOUT_SECONDS - elapsed);
+      
+      setupBookingListeners(activeBooking._id, activeBooking.status, remaining);
     } catch (err) { /* handle */ }
   })();
   }, []);
 
   const updateActiveStatus = (status) => {
     const current = getActiveBooking();
+    setRideStatus(status);
     if (current) setActiveBooking({ ...current, status });
   };
 
-  const handleBookingTermination = (finalStatus) => {
-    const socket = getSocket();
-    const bookingEvent = `booking:${bookingId}`;
-    socket.off(bookingEvent);
-    if (driverLocationRef.current) {
-      socket.off('driver:locationUpdate', driverLocationRef.current);
-      driverLocationRef.current = null;
-    }
-    if (riderLocationWatchRef.current) {
-      riderLocationWatchRef.current();
-      riderLocationWatchRef.current = null;
-    }
-    if (roomUnsubRef.current) {
-      roomUnsubRef.current();
-      roomUnsubRef.current = null;
-    }
+  const handleBookingTermination = (finalStatus, message = '') => {
+    // Ensure all listeners are cleaned up via the consolidated ref
+    if (roomUnsubRef.current) roomUnsubRef.current();
+    roomUnsubRef.current = null; // BUG 16: Cleaned up redundant block
+
     stopPolling();
     clearActiveBooking();
     setBooking(finalStatus);
+    setRideStatus(null);
+    setIsBoarded(false);
     setBookingId(null);
     setDriver(null);
     setDriverLocation(null);
@@ -210,17 +304,13 @@ const storedBooking = getActiveBooking();
     setFare(null);
   };
 
-  const setupBookingListeners = (id) => {
+  const setupBookingListeners = (id, initialStatus = 'searching', startCountdown = TIMEOUT_SECONDS) => {
         const socket = connectSocket();
 
-        // 1. Cleanup old listeners to prevent memory leaks/duplicates
-        const bookingEvent = `booking:${id}`;
-        socket.off(bookingEvent);
-        if (driverLocationRef.current) {
-          socket.off('driver:locationUpdate', driverLocationRef.current);
-        }
-
-        // 2. Resume location sharing if session is restored
+        // 1. Cleanup previous refs
+        if (roomUnsubRef.current) roomUnsubRef.current();
+        
+        // 2. Start location sharing
         if (riderLocationWatchRef.current) riderLocationWatchRef.current();
         riderLocationWatchRef.current = watchPosition(pos => {
           emitRiderLocation({ 
@@ -229,29 +319,32 @@ const storedBooking = getActiveBooking();
           });
         });
 
-        // 3. Attach location handler
-        const driverLocationHandler = (data) => {
+        // 3. Attach Driver Location Listener
+        const unsubLocation = onDriverLocationUpdate((data) => {
           if (driverIdRef.current && String(driverIdRef.current) === String(data.driverId)) {
             setDriverLocation({ lat: data.lat, lng: data.lng, bearing: data.bearing, speed: data.speed });
           }
-        };
-        driverLocationRef.current = driverLocationHandler;
-        socket.on('driver:locationUpdate', driverLocationHandler);
+        });
 
-        // 4. Attach main booking handler BEFORE joining room
-        socket.on(bookingEvent, (data) => {
-          setSocketDebug(d => [...d.slice(-9), { t: Date.now(), e: bookingEvent, d: data }]);
-          if (data.action === 'accept' && data.driver) {
+        // 4. Attach Main Booking Handler (BEFORE joining room to catch replays)
+        const unsubUpdate = onBookingUpdate(id, (data) => {
+          setSocketDebug(d => [...d.slice(-9), { t: Date.now(), e: `booking:${id}`, d: data }]);
+          // Logic Upgrade: Uniform action handling for state transitions
+          if ((data.action === 'accept' || data.action === 'sync') && data.driver) {
+            playTada();
             clearTimeout(timeoutRef.current); // BUG FIX: Kill the searching timeout
             clearInterval(countdownRef.current);
             setDriver(data.driver);
             driverIdRef.current = data.driver.driverId;
             if (data.otp) setOtp(data.otp);
             
-            // USE INITIAL LOCATION: Don't wait 10s for the first GPS update
-            if (data.location) setDriverLocation(data.location);
+            // Polished: Deep merge driver location into state immediately
+            if (data.location || data.driver.location) {
+              setDriverLocation(data.location || data.driver.location);
+            }
             
             setBooking('found');
+            setRideStatus('accepted');
             
             const currentBooking = getActiveBooking();
             setActiveBooking({
@@ -266,31 +359,51 @@ const storedBooking = getActiveBooking();
             updateActiveStatus('started');
           } else if (data.action === 'completed') {
             handleBookingTermination('completed');
+            setRideStatus(null);
           } else if (data.action === 'cancelled') {
             handleBookingTermination('cancelled');
           } else if (data.action === 'driver_arrived') {
-             alert('Your driver has arrived at the pickup location!');
+             // Potential for a non-blocking toast here
+             setSocketDebug(prev => [...prev, { t: Date.now(), e: 'info', d: 'Driver has arrived!' }]);
+          } else if (data.action === 'health_alert') {
+             // World-class UX: Log the monitoring status
+             setSocketDebug(prev => [...prev, { t: Date.now(), e: 'health_check', d: data.message }]);
           } else if (data.action === 'driver_offline') {
             handleBookingTermination('driver_offline');
           }
         });
 
-        // 5. Finally join the room (triggers replay if driver already accepted)
-        if (roomUnsubRef.current) roomUnsubRef.current();
-        roomUnsubRef.current = joinBookingRoom(id);
+        const roomUnsub = joinBookingRoom(id, getToken());
+        
+        // 5. Consolidate cleanup logic to prevent memory leaks
+        roomUnsubRef.current = () => {
+          unsubUpdate();
+          unsubLocation();
+          roomUnsub();
+          if (riderLocationWatchRef.current) {
+            riderLocationWatchRef.current();
+            riderLocationWatchRef.current = null;
+          }
+        };
 
-        // 6. Start the timeout if we are still in searching state after recovery
-        if (booking === 'searching' && !timeoutRef.current) {
+        // 6. Accurate Searching Timeout Logic
+        if (initialStatus === 'searching' && !timeoutRef.current) {
+          setCountdown(startCountdown);
+          countdownRef.current = setInterval(() => {
+            setCountdown(prev => (prev <= 1 ? 0 : prev - 1));
+          }, 1000);
+
           timeoutRef.current = setTimeout(async () => {
-            socket.off(bookingEvent);
+            if (roomUnsubRef.current) roomUnsubRef.current();
             try { await api.cancelBooking(id, getToken()); } catch {}
             clearActiveBooking();
             setBooking('timeout');
-          }, countdown * 1000);
+          }, startCountdown * 1000);
         }
   };
 
   // ✅ UBER-STYLE POLLING: self-heal if socket events are missed
+  // This is a fallback for when socket events are missed or the app is restored.
   const startPolling = (id) => {
     stopPolling();
     pollRef.current = setInterval(async () => {
@@ -305,7 +418,7 @@ const storedBooking = getActiveBooking();
           rating: b.driverId.rating,
           eta: b.eta || '3-5 min'
         });
-        setOtp(b.startOTP);
+        if (b.startOTP) setOtp(b.startOTP);
         setBooking('found');
         stopPolling(); // logic restored, stop polling
       }
@@ -343,29 +456,16 @@ const storedBooking = getActiveBooking();
 
   useEffect(() => {
     return () => {
-      clearTimeout(timeoutRef.current);
-      clearInterval(countdownRef.current);
-      if (riderLocationWatchRef.current) {
-        riderLocationWatchRef.current();
-        riderLocationWatchRef.current = null;
-      }
       if (roomUnsubRef.current) {
         roomUnsubRef.current();
         roomUnsubRef.current = null;
-      }
-      const socket = getSocket();
-      if (socket && bookingId) {
-        socket.off(`booking:${bookingId}`);
-        if (driverLocationRef.current) {
-          socket.off('driver:locationUpdate', driverLocationRef.current);
-          driverLocationRef.current = null;
-        }
       }
     };
   }, [bookingId]);
 
   // ── Create booking + start driver search ─────────────────────
-  const startBooking = async (paymentInfo = {}) => {
+  const startBooking = async () => {
+    playWhoosh();
     setBooking('searching');
     setCountdown(TIMEOUT_SECONDS);
     const fareAmount = fare?.amount || 50;
@@ -375,10 +475,7 @@ const storedBooking = getActiveBooking();
       fareAmount,  payment,
       distance:    route?.distanceKm ? `${route.distanceKm} km` : '--',
       duration:    route?.durationMin ? `${route.durationMin} min` : '--',
-      razorpayOrderId:   paymentInfo.razorpay_order_id   || null,
-      razorpayPaymentId: paymentInfo.razorpay_payment_id || null,
-      razorpaySignature: paymentInfo.razorpay_signature  || null,
-      paid: !!paymentInfo.razorpay_payment_id,
+      paid: payment === 'Online', // UPI Intent logic
     };
     try {
       const { booking: b } = await api.createBooking(bk, getToken());
@@ -386,234 +483,74 @@ const storedBooking = getActiveBooking();
       addBooking(b);
       setBookingId(b.id);
       if (b.otp) setOtp(b.otp);
+      setRideStatus(b.status);
       setActiveBooking({
         id: b.id,
         status: b.status,
         type, pickup, pickupCoords, dropoff, dropoffCoords,
-        payment, fareAmount, fare: bk.fare,
+        payment, fareAmount, fare: bk.fare, 
         otp: b.otp,
       });
-      const socket = connectSocket();
-
-      const bookingEvent = `booking:${b.id}`;
-      
-      // ✅ CRITICAL: Attach listeners BEFORE joining the room to catch replays
-      socket.off(bookingEvent); 
-      
-      const driverLocationHandler = ({ driverId, lat, lng, bearing, speed }) => {
-        if (driverIdRef.current && String(driverIdRef.current) === String(driverId)) {
-          setDriverLocation({ lat, lng, bearing, speed });
-        }
-      };
-      driverLocationRef.current = driverLocationHandler;
-      socket.on('driver:locationUpdate', driverLocationHandler);
-
-      // Keep the booking listener active until the trip completes or is cancelled.
-      // Named function so socket.off() removes exactly this handler, not all listeners.
-      const bookingHandler = (data) => {
-        setSocketDebug(d => [...d.slice(-9), { t: Date.now(), e: bookingEvent, d: data }]);
-        clearTimeout(timeoutRef.current);
-        clearInterval(countdownRef.current);
-
-        if (data.action === 'accept' && data.driver) {
-          setDriver(data.driver);
-          driverIdRef.current = data.driver.driverId;
-          if (data.otp) setOtp(data.otp);
-          setBooking('found');
-          const currentBooking = getActiveBooking();
-          setActiveBooking({
-            ...(typeof currentBooking === 'object' && currentBooking ? currentBooking : {}),
-            status: 'accepted',
-            driver: data.driver,
-            otp: data.otp,
-          });
-
-        } else if (data.action === 'started') {
-          setBooking('found');
-          const currentBooking = getActiveBooking();
-          setActiveBooking({
-            ...(typeof currentBooking === 'object' && currentBooking ? currentBooking : {}),
-            status: 'started',
-          });
-
-        } else if (data.action === 'completed') {
-          socket.off(bookingEvent, bookingHandler);
-          if (driverLocationRef.current) {
-            socket.off('driver:locationUpdate', driverLocationRef.current);
-            driverLocationRef.current = null;
-          }
-          if (riderLocationWatchRef.current) {
-            riderLocationWatchRef.current();
-            riderLocationWatchRef.current = null;
-          }
-          clearActiveBooking();
-          setBooking('completed');
-          setBookingId(null);
-          setDriver(null);
-          setDriverLocation(null);
-
-        } else if (data.action === 'decline') {
-          // Driver declined — keep searching, don't cancel the booking
-
-        } else if (data.action === 'cancelled') {
-          socket.off(bookingEvent, bookingHandler);
-          if (driverLocationRef.current) {
-            socket.off('driver:locationUpdate', driverLocationRef.current);
-            driverLocationRef.current = null;
-          }
-          if (riderLocationWatchRef.current) {
-            riderLocationWatchRef.current();
-            riderLocationWatchRef.current = null;
-          }
-          clearActiveBooking();
-          setBooking('cancelled');
-          setBookingId(null);
-          setDriver(null);
-          setDriverLocation(null);
-
-        } else if (data.action === 'driver_offline') {
-          // ── BUG FIX F ─────────────────────────────────────────
-          // Previously: BookRide.jsx had ZERO handler for driver going
-          // offline mid-ride. The rider would be stuck on "Driver Found"
-          // forever with no recourse.
-          //
-          // Now: index.js disconnect handler emits { action: 'driver_offline' }
-          // to the booking room, and we handle it here — clean up listeners,
-          // clear state, and show the "cancelled" screen with a clear message.
-          socket.off(bookingEvent, bookingHandler);
-          if (driverLocationRef.current) {
-            socket.off('driver:locationUpdate', driverLocationRef.current);
-            driverLocationRef.current = null;
-          }
-          if (riderLocationWatchRef.current) {
-            riderLocationWatchRef.current();
-            riderLocationWatchRef.current = null;
-          }
-          clearActiveBooking();
-          // Reuse 'cancelled' screen — the UI copy already says
-          // "The driver cancelled the ride. You can search again."
-          // which is accurate enough. Alternatively set a dedicated state.
-          setBooking('driver_offline');
-          setBookingId(null);
-          setDriver(null);
-          setDriverLocation(null);
-        }
-      };
-
-      socket.on(bookingEvent, bookingHandler);
-
-      // ✅ Now join the room safely
-      if (roomUnsubRef.current) roomUnsubRef.current();
-      roomUnsubRef.current = joinBookingRoom(b.id);
-
-      if (riderLocationWatchRef.current) riderLocationWatchRef.current();
-      riderLocationWatchRef.current = watchPosition(pos => {
-        emitRiderLocation({ bookingId: b.id, lat: pos.lat, lng: pos.lng, bearing: pos.bearing, speed: pos.speed });
-      });
-
-      countdownRef.current = setInterval(() => {
-        setCountdown(prev => { if (prev <= 1) { clearInterval(countdownRef.current); return 0; } return prev - 1; });
-      }, 1000);
-      timeoutRef.current = setTimeout(async () => {
-        clearInterval(countdownRef.current);
-        socket.off(bookingEvent);
-        if (driverLocationRef.current) {
-          socket.off('driver:locationUpdate', driverLocationRef.current);
-          driverLocationRef.current = null;
-        }
-        try { await api.cancelBooking(b.id, getToken()); } catch {}
-        clearActiveBooking(); // ✅ Clear active booking when timeout
-        setBooking('timeout');
-      }, TIMEOUT_SECONDS * 1000);
+      setupBookingListeners(b.id, b.status);
     } catch (err) {
       setBooking(null);
-      setPayLoading(false); // FIX: Reset loading state so user can retry
-      alert(err.message?.includes('Missing') ? 'Please fill all details.' : 'Unable to connect. Check your connection.');
-    }
-  };
-
-  // ── Open Razorpay checkout ───────────────────────────────────
-  const openRazorpay = async () => {
-    setPayLoading(true);
-    const loaded = await loadRazorpay();
-    if (!loaded) {
       setPayLoading(false);
-      alert('Payment service unavailable. Please use Cash.');
-      return;
-    }
-    const fareAmount = fare?.amount || 50;
-    try {
-      // Ask backend to create a Razorpay order
-      const order = await api.createPaymentOrder({ amount: fareAmount, currency: 'INR' }, getToken());
-      const options = {
-        key:         RAZORPAY_KEY_ID,
-        amount:      order.amount,
-        currency:    order.currency || 'INR',
-        name:        'MoveOn Go',
-        description: `${TYPES.find(t => t.id === type)?.label} · ${pickup} → ${dropoff}`,
-        order_id:    order.id,
-        theme:       { color: '#0D47A1' },
-        modal: {
-          ondismiss: () => setPayLoading(false),
-        },
-        handler: async (response) => {
-          setPayLoading(false);
-          await startBooking(response);
-        },
-      };
-      const rzp = new window.Razorpay(options);
-      rzp.on('payment.failed', () => {
-        setPayLoading(false);
-        alert('Payment failed. Please try again or use Cash.');
-      });
-      rzp.open();
-    } catch {
-      setPayLoading(false);
-      alert('Could not initiate payment. Please use Cash or check connection.');
+      alert(err.message || 'Unable to connect. Check your connection.');
     }
   };
 
   const handleBook = async () => {
     if (!pickup || !dropoff) { alert('Please enter pickup and drop location'); return; }
-    // FIX #8: Validate coords are real numeric lat/lng before submitting.
-    // Previously a null/NaN coord reached the backend, passed the truthy check
-    // (!pickupCoords), stored bad data, and fare/routing calculations broke.
     const isValidCoord = (c) =>
       c && typeof c.lat === 'number' && typeof c.lng === 'number' &&
       !isNaN(c.lat) && !isNaN(c.lng);
     if (!isValidCoord(pickupCoords))  { alert('Could not get pickup coordinates. Try searching the location again.'); return; }
     if (!isValidCoord(dropoffCoords)) { alert('Could not get drop-off coordinates. Try searching the location again.'); return; }
-    if (payment === 'Cash') await startBooking();
-    else await openRazorpay();
+    
+    if (payment === 'Online') {
+      // FREE ALTERNATIVE: UPI Intent (Deep Link)
+      // pa: your VPA/UPI ID, pn: Merchant Name
+      const upiUrl = `upi://pay?pa=YOUR_UPI_ID@bank&pn=MoveOnGo&am=${fare?.amount || 50}&cu=INR`;
+      window.location.href = upiUrl;
+      // Delay search slightly to allow the user to switch apps
+      setTimeout(() => startBooking(), 3000);
+    } else {
+      await startBooking();
+    }
+  };
+
+  const handleShareLocation = async () => {
+    if (!driver) return;
+    const text = `✨ On my way with MoveOn Go! ✨\nDriver: ${driver.name} (${driver.vehicleNumber})\nTrack me live here:`;
+    const url = `${window.location.origin}/track/${bookingId}`;
+
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: 'MoveOn Go - Ride Tracking',
+          text: text,
+          url: url,
+        });
+      } catch (err) { /* User cancelled share */ }
+    } else {
+      try {
+        await navigator.clipboard.writeText(`${text} ${url}`);
+        alert('Trip details copied to clipboard!');
+      } catch (err) {
+        alert('Could not share trip details.');
+      }
+    }
   };
 
   const handleCancel = async () => {
-    clearTimeout(timeoutRef.current);
-    clearInterval(countdownRef.current);
-    if (riderLocationWatchRef.current) {
-      riderLocationWatchRef.current();
-      riderLocationWatchRef.current = null;
-    }
-    // ── BUG FIX G ─────────────────────────────────────────────
-    // CRITICAL ORDER: call the API FIRST, THEN remove socket listeners.
-    // Previously listeners were torn down before api.cancelBooking(),
-    // so if the backend emitted booking:cancelled as an echo, the listener
-    // was already gone. More importantly, if the HTTP call failed we'd
-    // still clear UI leaving the driver in a broken "accepted" state.
-    // Now: HTTP cancel first (backend notifies driver), then clean up.
+    // CRITICAL ORDER: Call the API FIRST, THEN clean up local state and listeners.
     if (bookingId) {
       try { await api.cancelBooking(bookingId, getToken()); } catch {}
     }
-    const socket = getSocket();
-    if (socket && bookingId) {
-      socket.off(`booking:${bookingId}`);
-      if (driverLocationRef.current) {
-        socket.off('driver:locationUpdate', driverLocationRef.current);
-        driverLocationRef.current = null;
-      }
-    }
-    clearActiveBooking();
-    setBooking(null); setBookingId(null); setDriver(null); setDriverLocation(null); setPayLoading(false);
+    handleBookingTermination('cancelled'); // Use the consolidated termination handler
+    setPayLoading(false); // Ensure payment loading is reset
+    setRideStatus(null);
+    setIsBoarded(false);
   };
 
   // Function to manually re-fetch the OTP/Booking if "lost"
@@ -633,25 +570,27 @@ const storedBooking = getActiveBooking();
   // ── Searching ────────────────────────────────────────────────
   if (booking === 'searching') return (
     <div className="app">
-      <Header title="Finding Driver" showBack onBack={handleCancel}/>
+      <Header title="Searching..." showBack onBack={handleCancel}/>
       <div className="page br-waiting">
         <div className="br-pulse-wrap">
           <div className="br-pulse-ring"/>
           <div className="br-pulse-ring br-pulse-ring--2"/>
+          <div className="br-pulse-glow"/>
           <span style={{fontSize:40}}>{TYPES.find(t=>t.id===type)?.emoji||'🚗'}</span>
         </div>
-        <p className="br-waiting-title">Looking for a {type} near you...</p>
-        <p className="br-waiting-sub">This may take a few seconds</p>
-        <div style={{marginTop:16,fontSize:13,color:countdown<15?'var(--danger)':'var(--gray-400)',transition:'color 0.3s'}}>
-          Cancelling in {countdown}s if no driver found
+        <p className="br-waiting-title">Matching you with the best {type}...</p>
+        <p className="br-waiting-sub">Hang tight, we're almost there! ⚡</p>
+        
+        <div className="br-countdown-pill" style={{ color: countdown < 10 ? '#ff4d4d' : 'inherit' }}>
+           Searching for {countdown}s
         </div>
-        <button className="btn btn--ghost" style={{marginTop:24}} onClick={handleCancel}>Cancel</button>
+        <button className="btn btn--secondary btn--lg" style={{marginTop:32, borderRadius:'30px', padding:'12px 40px'}} onClick={handleCancel}>Cancel Request</button>
       </div>
     </div>
   );
 
   // Debug panel
-  const DebugPanel = () => (
+  const DebugPanel = () => import.meta.env.DEV && (
     <div style={{ position: 'fixed', right: 8, bottom: 8, zIndex: 1000, background: 'rgba(0,0,0,0.6)', color: '#fff', padding: 8, borderRadius: 6, fontSize: 12, maxWidth: 360 }}>
       <div style={{ fontWeight: 'bold', marginBottom: 6 }}>Socket Debug</div>
       <div style={{ maxHeight: 160, overflow: 'auto' }}>
@@ -730,56 +669,118 @@ const storedBooking = getActiveBooking();
   // ── Driver found ─────────────────────────────────────────────
   if (booking === 'found' && driver) return (
     <div className="app">
-      <Header title="Driver Found"/>
-      <div className="page" style={{padding:'24px 16px'}}>
+      <Header title="Ride Secured! ✅"/>
+      <div className="page" style={{padding:'20px 16px'}}>
         <div className="card br-driver-card slide-up">
+          <div className="br-ride-live-tag">
+             <span className="live-dot" /> LIVE TRACKING
+          </div>
+
           <div className="br-driver-top">
             <div className="br-driver-avatar">{driver.name?.[0]||'D'}</div>
-            <div>
+            <div style={{flex:1}}>
               <div className="br-driver-name">{driver.name}</div>
-              <div className="br-driver-rating">⭐ {driver.rating||'4.5'} · {driver.vehicleNumber}</div>
+              <div className="br-driver-rating">⭐ {driver.rating||'4.8'} • {driver.vehicleNumber}</div>
             </div>
-            <a href={`tel:${driver.phone}`} className="btn btn--secondary" style={{padding:'8px 14px',fontSize:13}}>Call</a>
+            <a href={`tel:${driver.phone}`} className="br-call-btn">
+               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 10.8a19.79 19.79 0 01-3.07-8.67A2 2 0 012 0h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L6.09 7.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/></svg>
+            </a>
           </div>
-          <div className="divider"/>
-          <div className="br-driver-eta">🕐 Arriving in {driver.eta||'3–5 min'}</div>
+          
+          <div className="br-driver-eta">Arriving in <span className="highlight">{driver.eta||'4 mins'}</span></div>
+          
           <div className="br-driver-details">
-            <span>📏 {route?.distanceKm} km</span>
-            <span>⏱ {route?.durationMin} min</span>
-            <span>💰 {fare?.display}</span>
-            <span>💳 {payment}</span>
+            <div className="br-det-item">📏 {route?.distanceKm || '--'} km</div>
+            <div className="br-det-item">⏱ {route?.durationMin || '--'} min</div>
+            <div className="br-det-item">💰 {fare?.display || '₹--'}</div>
+            <div className="br-det-item">💳 {payment}</div>
           </div>
-          {driverLocation && (
-            <div className="br-driver-location">
-              🚗 Driver current position: {driverLocation.lat.toFixed(4)}, {driverLocation.lng.toFixed(4)}
-            </div>
-          )}
+
           {payment !== 'Cash' && (
-            <div className="br-paid-badge">✅ Payment Confirmed via Razorpay</div>
+            <div className="br-paid-badge">✅ Payment Confirmed via UPI</div>
           )}
 
           <div className="br-otp-card">
             <div className="br-otp-info">
-              <span className="br-otp-label">START PIN</span>
+              <span className="br-otp-label">TRIP CODE (For Reference)</span>
               <span className="br-otp-val">{otp || '----'}</span>
             </div>
-            <button className="br-otp-btn" onClick={refreshBooking} title="Refresh PIN">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
-              </svg>
-              <span>Retrieve PIN</span>
-            </button>
           </div>
+
+          {payment === 'Cash' && rideStatus === 'started' && (
+            <button 
+              className="btn btn--success btn--full" 
+              style={{marginTop: 16, height: 48, fontWeight: 700, fontSize: 14}}
+              onClick={(e) => { e.target.disabled = true; e.target.innerText = '✅ Payment Confirmed'; alert('Cash payment acknowledged. Thank you for riding with MoveOn Go!'); }}
+            >
+              💵 I have paid Cash
+            </button>
+          )}
         </div>
-        <div style={{display:'flex',gap:12,marginTop:16}}>
-          <button className="btn btn--secondary btn--lg" style={{flex:1}} onClick={() => navigate('/map')}>Track on Map</button>
+
+        {showQr && (
+          <>
+            <div className="overlay" onClick={() => setShowQr(false)} style={{zIndex: 2000, background: 'rgba(0,0,0,0.7)'}} />
+            <div className="card slide-up" style={{
+              position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
+              zIndex: 2001, padding: 24, textAlign: 'center', width: '85%', maxWidth: 320,
+              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)'
+            }}>
+              <h3 style={{marginBottom: 16, fontSize: 18, fontWeight: 700}}>Scan to Track</h3>
+              <div style={{ background: 'white', padding: 12, borderRadius: 12, display: 'inline-block', border: '1px solid var(--gray-200)' }}>
+                <img 
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`${window.location.origin}/track/${bookingId}`)}`} 
+                  alt="QR Code" 
+                  style={{display: 'block', width: 200, height: 200}}
+                />
+              </div>
+              <p style={{fontSize: 13, color: 'var(--gray-500)', marginTop: 16, lineHeight: 1.5}}>
+                Ask the driver to scan this code to track the live trip on their device.
+              </p>
+              <button className="btn btn--primary btn--full btn--lg" style={{marginTop: 20}} onClick={() => setShowQr(false)}>Close</button>
+            </div>
+          </>
+        )}
+
+        <div style={{display:'flex',gap:12,marginTop:16,flexWrap:'wrap'}}>
+          <button className="btn btn--secondary btn--lg" style={{flex:1,minWidth:'140px'}} onClick={() => navigate('/map')}>Track on Map</button>
+          <button className="btn btn--secondary btn--lg" style={{flex:1,minWidth:'140px',display:'flex',alignItems:'center',justifyContent:'center',gap:8}} onClick={handleShareLocation}>
+            <ShareIcon /> Share Trip
+          </button>
+          <button className="btn btn--secondary btn--lg" style={{flex:1,minWidth:'140px',display:'flex',alignItems:'center',justifyContent:'center',gap:8}} onClick={() => setShowQr(true)}>
+            <QrIcon /> Show QR
+          </button>
           {/* FIX: Disable cancellation if trip has already started */}
           {getActiveBooking()?.status !== 'started' && (
-            <button className="btn btn--danger btn--lg" style={{flex:1}} onClick={handleCancel}>Cancel Ride</button>
+            <button className="btn btn--danger btn--lg" style={{flex:1,minWidth:'140px'}} onClick={handleCancel}>Cancel Ride</button>
           )}
         </div>
       </div>
       <BottomNav/>
+
+      {/* ✅ Floating Boarded Toggle: Allows users to manually signal boarding */}
+      {rideStatus === 'started' && (
+        <button 
+          className={`br-boarded-btn ${isBoarded ? 'toggled' : ''}`} 
+          onClick={async () => { 
+            const nextState = !isBoarded;
+            setIsBoarded(nextState); 
+            playPop(); 
+            window.navigator?.vibrate?.(20); 
+            
+            if (nextState && bookingId) {
+              try {
+                await api.riderBoarded(bookingId, getToken());
+              } catch (err) {
+                console.error("Failed to notify boarding:", err);
+              }
+            }
+          }}
+        >
+          <span>{isBoarded ? '✅' : '🚌'}</span>
+          {isBoarded ? 'BOARDED' : 'BOARDED?'}
+        </button>
+      )}
     </div>
   );
 
@@ -789,24 +790,28 @@ const storedBooking = getActiveBooking();
       <Header title="Book a Ride" showBack onBack={() => navigate(-1)}/>
       <div className="page" style={{padding:'16px'}}>
 
-        <p className="section-label" style={{padding:'0 0 8px'}}>Select Vehicle</p>
+        <p className="section-label slide-up" style={{padding:'0 0 8px', animationDelay: '0.05s'}}>Select Vehicle</p>
         <div style={{display:'flex',flexDirection:'column',gap:8,marginBottom:20}}>
           {TYPES.map(v => (
             <button key={v.id}
-              className={`br-type-card card ${type===v.id?'br-type-card--selected':''}`}
-              onClick={() => setType(v.id)}>
+              className={`br-type-card card ${type===v.id?'br-type-card--selected':''}`} style={{borderRadius:'20px'}}
+              onClick={() => {
+                playPop();
+                window.navigator?.vibrate?.(10);
+                setType(v.id);
+              }}>
               <span style={{fontSize:22,marginRight:8}}>{v.emoji}</span>
               <div style={{flex:1}}>
                 <div className="br-type-label">{v.label}</div>
                 <div className="br-type-sub">{v.cap} · {v.eta}</div>
               </div>
-              {type===v.id && <div className="br-type-check">✓</div>}
+              <div className={`br-radio ${type===v.id?'checked':''}`} />
             </button>
           ))}
         </div>
 
-        <p className="section-label" style={{padding:'0 0 8px'}}>Your Trip</p>
-        <div className="card" style={{padding:14,marginBottom:14,overflow:'visible'}}>
+        <p className="section-label" style={{padding:'0 0 8px'}}>Where to, Bestie? 📍</p>
+        <div className="card" style={{padding:14,marginBottom:14,overflow:'visible', borderRadius:'24px', border:'1px solid rgba(0,0,0,0.05)'}}>
           <PlaceSearch placeholder="Pickup location" value={pickup}
             onSelect={p => { if(p){setPickupCoords(p);setPickup(p.name);}else setPickupCoords(null); }}
             dotColor="var(--green-600)"/>
@@ -856,7 +861,7 @@ const storedBooking = getActiveBooking();
 
         {payment !== 'Cash' && (
           <div className="br-payment-note">
-            🔒 Secure payment via Razorpay · UPI, Cards & Net Banking accepted
+            🔒 Secure payment via UPI · Intent based deep-linking
           </div>
         )}
 
@@ -879,3 +884,6 @@ const storedBooking = getActiveBooking();
     </div>
   );
 }
+
+function ShareIcon() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8M16 6l-4-4-4 4M12 2v13"/></svg>; }
+function QrIcon() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>; }

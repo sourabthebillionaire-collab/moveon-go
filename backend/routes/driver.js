@@ -32,12 +32,12 @@ async function generateVehicleId(vehicleType, vehicleNumber) {
 
 // POST /api/driver/register
 router.post('/register', asyncHandler(async (req, res) => {
-  const { name, phone, email, vehicleType, vehicleNumber, pin, address, licenseNumber, busName, routeFrom, routeTo, routeNumber } = req.body;
+  const { name, phone, email, vehicleType, vehicleNumber, pin, address, licenseNumber, busName, routeFrom, routeTo, routeNumber, insuranceDoc } = req.body;
 
   // Validate required fields
-  if (!name || !phone || !vehicleType || !vehicleNumber || !pin) {
+  if (!name || !phone || !vehicleType || !vehicleNumber || !pin || !insuranceDoc) {
     logger.warn('Driver register: missing required fields');
-    return res.status(400).json({ message: 'Name, phone, vehicle type, vehicle number and PIN are required.' });
+    return res.status(400).json({ message: 'Name, phone, vehicle type, vehicle number, PIN and insurance document are required.' });
   }
 
   if (String(pin).length !== 4 || !/^\d{4}$/.test(String(pin))) {
@@ -74,6 +74,7 @@ router.post('/register', asyncHandler(async (req, res) => {
     pinHash,
     address:       address?.trim() || '',
     licenseNumber: licenseNumber?.trim() || '',
+    insuranceDoc,
     busName:       vehicleType === 'bus' ? (busName?.trim() || '') : '',
     routeFrom:     vehicleType === 'bus' ? (routeFrom?.trim() || '') : '',
     routeTo:       vehicleType === 'bus' ? (routeTo?.trim() || '') : '',
@@ -228,6 +229,16 @@ router.post('/duty', protectDriver, asyncHandler(async (req, res) => {
 // GET /api/driver/me
 router.get('/me', protectDriver, asyncHandler(async (req, res) => {
   res.json({ driver: req.driver });
+}));
+
+// POST /api/driver/event — Log operational events for monitoring
+router.post('/event', protectDriver, asyncHandler(async (req, res) => {
+  const { event, details } = req.body;
+  logger.error(`Driver Operational Event [${req.driver.vehicleId}]: ${event}`, {
+    driverId: req.driver._id,
+    ...details
+  });
+  res.json({ success: true });
 }));
 
 module.exports = router;

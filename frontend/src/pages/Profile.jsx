@@ -87,7 +87,7 @@ export default function Profile() {
 
   const handleLogout = () => { logout(); navigate('/login'); };
 
-  const initials = (user?.name?.split(' ') || [user?.phone?.slice(-2) || 'U'])
+  const initials = (user?.name ? user.name.split(' ') : [user?.phone?.slice(-2) || 'U']) // BUG 17: Safe initials
     .filter(w => w)
     .map(w => w[0])
     .slice(0, 2)

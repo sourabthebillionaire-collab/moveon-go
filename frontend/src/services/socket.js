@@ -94,12 +94,12 @@ export function emitRideResponse(rideId, action) {
 // and reconnected, the rider left the booking:${id} room and missed
 // all targeted events. Now re-joins on every reconnect.
 // Returns a cleanup function to stop auto-rejoining when booking ends.
-export function joinBookingRoom(bookingId) {
+export function joinBookingRoom(bookingId, token) {
   const s = getSocket();
 
   const doJoin = () => {
-    s.emit('rider:joinBooking', { bookingId });
-    console.log('[Socket] Joining booking room:', bookingId);
+    s.emit('rider:joinBooking', { bookingId, token });
+    console.log('[Socket] Joining booking room with auth:', bookingId);
   };
 
   if (s.connected) doJoin();
@@ -107,6 +107,11 @@ export function joinBookingRoom(bookingId) {
   s.on('connect', doJoin);
 
   return () => s.off('connect', doJoin);
+}
+
+// ── Rider: listen for booking updates ────────────────────────
+export function onBookingUpdate(bookingId, cb) {
+  return onBookingResponse(bookingId, cb);
 }
 
 // ── Rider: send current location while waiting for pickup ─────
@@ -132,7 +137,7 @@ export function onBookingResponse(bookingId, cb) {
 // ── Rider: live location of accepted driver ───────────────────
 export function onDriverLocationUpdate(cb) {
   const s = getSocket();
-  s.on('driver:locationUpdate', cb);
+  s.on('driver:locationUpdate', cb); // Attach the listener
   return () => s.off('driver:locationUpdate', cb);
 }
 

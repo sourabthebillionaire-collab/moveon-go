@@ -68,3 +68,52 @@
 .map-detail__occ-fill { height: 100%; border-radius: 4px; transition: width 0.4s ease; }
 
 .map-detail__actions { display: flex; gap: 12px; }
+
+/* User "You are here" Marker Pulse */
+.user-marker-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.user-marker-dot {
+  width: 14px;
+  height: 14px;
+  background: #1565C0;
+  border: 2.5px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  z-index: 2;
+}
+
+.user-marker-pulse {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  background: #1565C0;
+  border-radius: 50%;
+  z-index: 1;
+  opacity: 0.6;
+  animation: user-marker-ripple 2s ease-out infinite;
+}
+
+/* Enable smooth gliding for the marker container */
+.vehicle-marker-glide {
+  transition: transform 0.8s linear;
+}
+
+/* Disable transitions during map zoom to prevent markers from flying wildly */
+.leaflet-zoom-anim .vehicle-marker-glide {
+  transition: none !important;
+}
+
+/* Inner content smoothing */
+.marker-interpolated {
+  transition: background 0.3s ease;
+}
+
+@keyframes user-marker-ripple {
+  0% { transform: scale(1); opacity: 0.6; }
+  100% { transform: scale(3.5); opacity: 0; }
+}

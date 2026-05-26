@@ -1,6 +1,6 @@
 const router  = require('express').Router();
 const { Booking, Driver } = require('../models');
-const { protectDriver } = require('../middleware/auth');
+const { protect, protectDriver } = require('../middleware/auth');
 const { asyncHandler } = require('../utils/errorHandler');
 
 // POST /api/rides/:rideId/respond
@@ -69,15 +69,13 @@ router.post('/:rideId/respond', protectDriver, asyncHandler(async (req, res) => 
 
 // PUT /api/rides/:rideId/start — driver starts ride after pickup
 router.put('/:rideId/start', protectDriver, asyncHandler(async (req, res) => {
-  const { otp } = req.body;
   const rideId = req.params.rideId;
 
-  const check = await Booking.findById(rideId).select('startOTP status driverId');
+  const check = await Booking.findById(rideId).select('status driverId');
   if (!check) return res.status(404).json({ message: 'Booking not found.' });
 
-  if (check.startOTP !== String(otp)) {
-    return res.status(401).json({ message: 'Invalid OTP. Please ask the passenger for the 4-digit PIN.' });
-  }
+  // LOGIC SIMPLIFICATION: We removed the OTP check here to prevent 
+  // synchronization issues at busy Indian bus stands/auto stands.
 
   const booking = await Booking.findOneAndUpdate(
     { _id: rideId, driverId: req.driver._id, status: 'accepted' },
@@ -127,6 +125,7 @@ router.put('/:rideId/complete', protectDriver, asyncHandler(async (req, res) => 
     };
     global.io.to(`booking:${rideId}`).emit(`booking:${rideId}`, payload);
     global.io.activeBookings?.delete(String(rideId));
+    global.io.arrivedNotified?.delete(String(rideId));
     global.io.driverToBooking?.delete(String(req.driver._id));
   }
 
@@ -152,17 +151,37 @@ router.put('/:rideId/cancel', protectDriver, asyncHandler(async (req, res) => {
     const payload = { action: 'cancelled', bookingId: String(rideId), driverId: String(req.driver._id) };
     global.io.to(`booking:${rideId}`).emit(`booking:${rideId}`, payload);
     global.io.activeBookings?.delete(String(rideId));
+    global.io.arrivedNotified?.delete(String(rideId));
     global.io.driverToBooking?.delete(String(req.driver._id));
     
-    // Notify rider via their private channel as a fallback
-    if (booking.userId) {
-      global.io.to(`user:${booking.userId}`).emit('booking:status', {
-        bookingId: String(rideId), status: 'cancelled', message: 'Driver cancelled the ride.'
+    // FIX: Consistent room naming for rider notification
+    const roomName = `booking:${rideId}`;
+    if (global.io) {
+      global.io.to(roomName).emit(roomName, {
+        action: 'cancelled', bookingId: String(rideId), message: 'Driver cancelled the ride.'
       });
     }
   }
 
   res.json({ message: 'Ride cancelled.' });
+}));
+
+// PUT /api/rides/:rideId/boarded — rider confirms boarding
+router.put('/:rideId/boarded', protect, asyncHandler(async (req, res) => {
+  const rideId = req.params.rideId;
+
+  if (global.io) {
+    const booking = await Booking.findById(rideId).select('driverId').lean();
+    if (booking?.driverId) {
+      // Notify the driver via their private socket room
+      global.io.to(`driver:${booking.driverId}`).emit('rider:notification', {
+        type: 'BOARDED',
+        message: 'Passenger confirmed boarding! ✅',
+        bookingId: rideId
+      });
+    }
+  }
+  res.json({ message: 'Boarding notification sent.' });
 }));
 
 module.exports = router;

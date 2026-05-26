@@ -1,4 +1,7 @@
 const { Driver, Booking } = require('../models');
+const jwt = require('jsonwebtoken');
+const { socketHandler } = require('../utils/errorHandler');
+const logger = require('../utils/logger');
 
 // Helper for distance calculation (km)
 function getDist(lat1, lon1, lat2, lon2) {
@@ -16,6 +19,7 @@ module.exports = function initSocket(io) {
   const activeBookings         = io.activeBookings         || new Map();
   const driverToBooking        = io.driverToBooking        || new Map();
 
+  io.arrivedNotified        = io.arrivedNotified        || new Set();
   io.activeVehiclePositions = activeVehiclePositions;
   io.driverToBooking        = driverToBooking;
   io.activeBookings         = activeBookings;
@@ -24,31 +28,57 @@ module.exports = function initSocket(io) {
     console.log(`[Socket] Connected: ${socket.id}`);
 
     // ── Rider: send snapshot + join their booking room ──────────
-    socket.on('rider:connected', () => {
-      const snapshot = Array.from(activeVehiclePositions.values());
+    socket.on('rider:connected', socketHandler(socket, (data) => {
+      const { lat, lng } = data || {};
+      let snapshot = Array.from(activeVehiclePositions.values());
+
+      // ✅ PERFORMANCE: Filter snapshot to only show vehicles within a 20km radius.
+      // This significantly reduces the payload size and prevents client-side rendering lag.
+      if (lat != null && lng != null) {
+        snapshot = snapshot.filter(v => {
+          if (v.lat == null || v.lng == null) return false;
+          return getDist(lat, lng, v.lat, v.lng) <= 20;
+        });
+      }
+
       socket.emit('vehicles:snapshot', snapshot);
-    });
+    }));
 
     // Rider joins a dedicated room for their booking.
     // Called immediately after POST /api/bookings returns a bookingId.
     // If the driver already accepted (race condition), replay the accept event.
-    socket.on('rider:joinBooking', async ({ bookingId }) => {
-      const bId = bookingId ? String(bookingId) : null;
-      if (!bId) return;
-      socket.join(`booking:${bId}`);
-      console.log(`[Socket] Rider joined room booking:${bId}`);
-
-      // SELF-HEALING: If mapping is lost (e.g. server restart), reconstruct from DB
-      let driverId = activeBookings.get(bId);
-      if (!driverId) {
-        const booking = await Booking.findById(bId).select('driverId status').lean();
-        if (booking && booking.driverId && ['accepted', 'started'].includes(booking.status)) {
-          driverId = String(booking.driverId);
-          activeBookings.set(bId, driverId);
-          driverToBooking.set(driverId, bId);
-        }
+    socket.on('rider:joinBooking', socketHandler(socket, async ({ bookingId, token }) => {
+      const bId = bookingId ? String(bookingId).trim() : null; // BUG 1: Ensure trimmed string
+      if (!bId || !token) {
+        logger.warn(`Rider joinBooking attempt missing ID or token: Socket ${socket.id}`);
+        return;
       }
 
+      // ✅ SECURITY: Verify JWT Token
+      let userId;
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        if (decoded.type !== 'user') {
+          logger.warn(`Unauthorized rider:joinBooking attempt: Socket ${socket.id} has wrong token type`);
+          return;
+        }
+        userId = decoded.id;
+      } catch (err) {
+        logger.error(`Rider JWT verification failed for socket ${socket.id}: ${err.message}`);
+        return;
+      }
+
+      // ✅ SECURITY: Verify user owns this booking before allowing them to join the room
+      const bookingCheck = await Booking.findById(bId).select('userId').lean();
+      if (!bookingCheck || String(bookingCheck.userId) !== String(userId)) {
+        logger.warn(`User ${userId} tried to join unauthorized booking room ${bId}`);
+        return;
+      }
+
+      socket.join(`booking:${bId}`);
+      logger.info(`[Socket] Rider ${userId} joined room booking:${bId}`);
+
+      const driverId = activeBookings.get(bId);
       if (driverId) {
         const dId = String(driverId);
         driverToBooking.set(dId, bId);
@@ -77,27 +107,75 @@ module.exports = function initSocket(io) {
           location: pos ? { lat: pos.lat, lng: pos.lng } : null,
         });
       }
-    });
+    }));
+
+    // ── Viewer: join for public tracking (No token required) ──────
+    socket.on('viewer:joinBooking', socketHandler(socket, async ({ bookingId }) => {
+      const bId = bookingId ? String(bookingId).trim() : null;
+      if (!bId) return;
+
+      const booking = await Booking.findById(bId).select('status driverId').lean();
+      // Only allow joining if trip is active
+      if (!booking || !['accepted', 'started'].includes(booking.status)) return;
+
+      socket.join(`booking:${bId}`);
+      logger.info(`[Socket] Public Viewer joined room booking:${bId}`);
+
+      const driverId = booking.driverId || activeBookings.get(bId);
+      if (driverId) {
+        const dId = String(driverId);
+        const [driver, pos] = await Promise.all([
+          Driver.findById(dId).select('name vehicleNumber vehicleType rating').lean(),
+          Promise.resolve(activeVehiclePositions.get(dId))
+        ]);
+
+        socket.emit(`booking:${bId}`, {
+          action: booking.status === 'started' ? 'started' : 'accept',
+          driver: driver ? {
+            name:          driver.name,
+            vehicleNumber: driver.vehicleNumber,
+            vehicleType:   driver.vehicleType,
+            rating:        driver.rating || 4.5,
+            driverId:      dId,
+            location:      pos ? { lat: pos.lat, lng: pos.lng } : null,
+          } : null,
+          location: pos ? { lat: pos.lat, lng: pos.lng } : null,
+        });
+      }
+    }));
 
     // ── Driver: register into their personal room ──────────────
-    socket.on('driver:register', async ({ driverId, vehicleType }) => {
-      if (!driverId) return;
-      const dId = String(driverId);
-      connectedDrivers.set(socket.id, dId);
-      socket.join(`driver:${dId}`);
-      
-      // SELF-HEALING: Restore active booking mapping for location tracking
-      const booking = await Booking.findOne({ 
-        driverId: dId, 
-        status: { $in: ['accepted', 'started'] } 
-      }).select('_id').lean();
-      
-      if (booking) {
-        const bId = String(booking._id);
-        driverToBooking.set(dId, bId);
-        activeBookings.set(bId, dId);
+    socket.on('driver:register', socketHandler(socket, async ({ driverId, vehicleType, token }) => {
+      if (!driverId || !token) {
+        logger.warn(`Driver register attempt missing ID or token: Socket ${socket.id}`);
+        return;
       }
 
+      const dId = String(driverId);
+
+      // ✅ SECURITY: Verify JWT Token before allowing registration
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        if (decoded.type !== 'driver' || String(decoded.id) !== dId) {
+          logger.warn(`Unauthorized driver:register attempt: Socket ${socket.id} tried to register as ${dId}`);
+          return;
+        }
+      } catch (err) {
+        logger.error(`Driver JWT verification failed for socket ${socket.id}: ${err.message}`);
+        return;
+      }
+
+      // World-Class Refinement: Clean up existing socket connections for this driver
+      // to prevent "split-brain" tracking state.
+      for (const [sid, existingId] of connectedDrivers.entries()) {
+        if (existingId === dId && sid !== socket.id) {
+          io.sockets.sockets.get(sid)?.disconnect();
+          connectedDrivers.delete(sid);
+        }
+      }
+
+      connectedDrivers.set(socket.id, dId);
+      socket.join(`driver:${dId}`);
       // ✅ PERFORMANCE: Join a room for their vehicle type for targeted dispatching
       if (vehicleType) socket.join(`drivers:${vehicleType}`);
       console.log(`[Socket] Driver registered: ${driverId}`);
@@ -110,8 +188,11 @@ module.exports = function initSocket(io) {
         type, vehicleNumber, busName, routeFrom, routeTo, routeNumber, passengers, capacity
       } = data;
       
-      const isNum = (v) => typeof v === 'number' && !isNaN(v);
-      if (!isNum(lat) || !isNum(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return;
+      // Simplified Validation: Just ensure numbers exist
+      const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
+      if (!isNum(lat) || !isNum(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+        return;
+      }
 
       const posPayload = {
         id: driverId, lat, lng, bearing, speed, status,
@@ -154,17 +235,14 @@ module.exports = function initSocket(io) {
         const bookingData = await Booking.findById(activeBookingId).select('pickupLat pickupLng status');
         if (bookingData && bookingData.status === 'accepted') {
           const dist = getDist(lat, lng, bookingData.pickupLat, bookingData.pickupLng);
-          // Prevent spamming the rider with notification on every move
-          if (dist < 0.2 && !io.arrivedNotified?.has(activeBookingId)) {
-            if (!io.arrivedNotified) io.arrivedNotified = new Set();
-            io.arrivedNotified.add(activeBookingId);
-            
+          if (dist < 0.2 && !io.arrivedNotified.has(String(activeBookingId))) { // BUG 2: Prevent spam
+            io.arrivedNotified.add(String(activeBookingId));
             io.to(`booking:${activeBookingId}`).emit(`booking:${activeBookingId}`, { 
               action: 'driver_arrived',
               message: 'Your driver has arrived at the pickup location!' 
             });
-            console.log(`[Socket] Arrived notification sent for booking ${activeBookingId}`);
           }
+          console.log(`[Socket] Driver ${driverId} arrived at booking ${activeBookingId}`);
         }
       }
 
@@ -223,10 +301,27 @@ module.exports = function initSocket(io) {
       // FIX: Evacuate the room after trip completion
       io.in(roomName).socketsLeave(roomName);
       activeBookings.delete(String(bookingId));
-      io.arrivedNotified?.delete(String(bookingId));
+      io.arrivedNotified?.delete(String(bookingId)); // FIX: Clean up notification tracking
       if (driverId) driverToBooking.delete(String(driverId));
       console.log(`[Socket] trip:ended for booking ${bookingId} — rider notified`);
     });
+
+    // ── Ride Health: stationary alert ──────────────────────────
+    socket.on('ride:healthAlert', socketHandler(socket, async ({ bookingId, driverId, reason }) => {
+      if (!bookingId) return;
+
+      const isGpsLost = reason === 'GPS_LOST';
+      const msg = isGpsLost 
+        ? 'GPS connection lost: We are monitoring the trip status for your safety.'
+        : 'Stationary alert: We are monitoring the driver status for your safety.';
+
+      logger.warn(`[Ride Health] ${isGpsLost ? 'GPS Lost' : 'Stationary'} alert`, { bookingId, driverId });
+      
+      io.to(`booking:${bookingId}`).emit(`booking:${bookingId}`, {
+        action: 'health_alert',
+        message: msg
+      });
+    }));
 
     // ── Disconnect ─────────────────────────────────────────────
     socket.on('disconnect', async () => {
@@ -294,7 +389,6 @@ module.exports = function initSocket(io) {
               driverId:  String(d._id),
             });
             activeBookings.delete(bookingId);
-            driverToBooking.delete(String(d._id));
             console.log(`[Socket] Stale driver ${d._id} — rider for booking ${bookingId} notified`);
             break;
           }

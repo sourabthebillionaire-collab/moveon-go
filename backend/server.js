@@ -99,7 +99,6 @@ app.use('/api/vehicles', require('./routes/vehicles'));
 app.use('/api/buses',    require('./routes/buses'));
 app.use('/api/bookings', require('./routes/bookings'));
 app.use('/api/fare',     require('./routes/fare'));
-app.use('/api/payments', require('./routes/payments')); // FIX: Mount missing payments route
 app.use('/api/rides',    require('./routes/rides'));
 
 // ── Health check ──────────────────────────────────────────────

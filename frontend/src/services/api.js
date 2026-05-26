@@ -86,6 +86,9 @@ export const api = {
   setDriverDuty: (onDuty, token) =>
     post('/driver/duty', { onDuty }, token),
 
+  logDriverEvent: (data, token) =>
+    post('/driver/event', data, token),
+
   respondToRide: (rideId, action, token) =>
     post(`/rides/${rideId}/respond`, { action }, token),
 
@@ -115,6 +118,10 @@ export const api = {
   getActiveBooking: (token) =>
     get('/bookings/active', token),
 
+  // Public tracking endpoint (no token required)
+  getPublicTrip: (bookingId) =>
+    get(`/bookings/public/${bookingId}`),
+
   // FIX: Verify driver's stored ride is still live in DB.
   // Prevents "Failed to start the ride" from stale localStorage rides.
   getDriverActiveBooking: (token) =>
@@ -127,15 +134,8 @@ export const api = {
     put(`/rides/${bookingId}/complete`, null, token),
   cancelRide: (bookingId, token) =>
     put(`/rides/${bookingId}/cancel`, null, token),
-
-  // ── Payments ──────────────────────────────────────────────────
-  // FIX: Was called in BookRide.jsx but never defined here.
-  // Any non-cash payment crashed with "api.createPaymentOrder is not a function".
-  createPaymentOrder: (data, token) =>
-    post('/payments/create-order', data, token),
-
-  verifyPayment: (data, token) =>
-    post('/payments/verify', data, token),
+  riderBoarded: (bookingId, token) =>
+    put(`/rides/${bookingId}/boarded`, null, token),
 
   // ── Fare ──────────────────────────────────────────────────────
   getFareEstimate: (from, to, vehicleType) =>

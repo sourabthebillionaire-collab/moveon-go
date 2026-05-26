@@ -48,9 +48,26 @@ export default function DriverRegister() {
     routeNumber:   '',
     pin:           '',
     confirmPin:    '',
+    insuranceDoc:  '',
   });
 
   const set = (key, val) => { setForm(f => ({ ...f, [key]: val })); setError(''); };
+
+  const handleFileChange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    
+    if (file.size > 2 * 1024 * 1024) {
+      setError('File size must be less than 2MB.');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      set('insuranceDoc', reader.result);
+    };
+    reader.readAsDataURL(file);
+  };
 
   useEffect(() => { firstRef.current?.focus(); }, [step]);
 
@@ -65,6 +82,7 @@ export default function DriverRegister() {
     2: () => {
       if (!form.vehicleType)          return 'Please select your vehicle type.';
       if (!form.vehicleNumber.trim()) return 'Vehicle registration number is required.';
+      if (!form.insuranceDoc)         return 'Vehicle insurance document is required.';
       if (form.vehicleType === 'bus') {
         if (!form.busName.trim())   return 'Bus name is required.';
         if (!form.routeFrom.trim()) return 'Route start point is required.';
@@ -108,6 +126,7 @@ export default function DriverRegister() {
         routeTo:       form.routeTo.trim(),
         routeNumber:   form.routeNumber.trim(),
         pin:           form.pin,
+        insuranceDoc:  form.insuranceDoc,
       });
       
       setResult(data);
@@ -283,6 +302,33 @@ export default function DriverRegister() {
                   placeholder="e.g. OD-05-AB-1234"/>
               </Field>
 
+              <Field label="Vehicle Insurance Document" hint="Upload a clear photo or PDF (Max 2MB)">
+                <input 
+                  type="file" 
+                  accept="image/*,.pdf"
+                  onChange={handleFileChange}
+                  className="dreg2-input"
+                  style={{ paddingTop: '8px', paddingBottom: '8px' }}/>
+                {form.insuranceDoc && (
+                  <div style={{ marginTop: '10px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    {form.insuranceDoc.startsWith('data:image/') ? (
+                      <img 
+                        src={form.insuranceDoc} 
+                        alt="Insurance Document Preview" 
+                        style={{ width: '60px', height: '60px', objectFit: 'cover', borderRadius: '4px', border: '1px solid var(--gray-200)' }}
+                      />
+                    ) : (
+                      <div style={{ width: '60px', height: '60px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--gray-100)', borderRadius: '4px', border: '1px solid var(--gray-200)' }}>
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{color: 'var(--gray-500)'}}><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                      </div>
+                    )}
+                    <span style={{ fontSize: '13px', color: 'var(--gray-600)' }}>
+                      {file ? file.name : (form.insuranceDoc.startsWith('data:image/') ? 'Image uploaded' : 'PDF uploaded')}
+                    </span>
+                  </div>
+                )}
+              </Field>
+
               {/* ✅ Bus-specific fields — only shown when bus is selected */}
               {isBus && (
                 <div className="dreg2-bus-section">
@@ -368,6 +414,7 @@ export default function DriverRegister() {
                   ['Phone',        form.phone],
                   ['Vehicle Type', VEHICLE_TYPES.find(v=>v.id===form.vehicleType)?.label || '—'],
                   ['Vehicle No.',  form.vehicleNumber],
+                  ['Insurance Doc', form.insuranceDoc ? 'Uploaded ✓' : 'Not Uploaded'],
                   ...(isBus ? [
                     ['Bus Name',   form.busName],
                     ['Route',      form.routeFrom && form.routeTo ? `${form.routeFrom} → ${form.routeTo}` : '—'],

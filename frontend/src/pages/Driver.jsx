@@ -45,6 +45,11 @@ const T = {
     decline:       'Decline',
     startTrip:     'Start Trip',
     endTrip:       'End Trip',
+    navigate:      'Navigate to Pickup',
+    navigateDrop:  'Navigate to Drop',
+    scanQr:        'Scan Rider QR',
+    cashReceived:  'Cash Received',
+    confirmCash:   'Cash collection acknowledged.',
     cancelRide:    'Cancel Ride',
     reportIssue:   'Report Issue',
     callControl:   'Call Control Room',
@@ -91,6 +96,11 @@ const T = {
     decline:       'मना करें',
     startTrip:     'यात्रा शुरू',
     endTrip:       'यात्रा खत्म',
+    navigate:      'पिकअप पर जाएं',
+    navigateDrop:  'ड्रॉप पर जाएं',
+    scanQr:        'QR स्कैन करें',
+    cashReceived:  'नकद प्राप्त हुआ',
+    confirmCash:   'नकद प्राप्ति की पुष्टि हुई।',
     cancelRide:    'राइड रद्द करें',
     reportIssue:   'समस्या बताएं',
     callControl:   'कंट्रोल रूम कॉल',
@@ -137,6 +147,11 @@ const T = {
     decline:       'ମନା କରନ୍ତୁ',
     startTrip:     'ଯାତ୍ରା ଆରମ୍ଭ',
     endTrip:       'ଯାତ୍ରା ଶେଷ',
+    navigate:      'ଉଠାଇବା ସ୍ଥାନକୁ ଯାଆନ୍ତୁ',
+    navigateDrop:  'ଛାଡ଼ିବା ସ୍ଥାନକୁ ଯାଆନ୍ତୁ',
+    scanQr:        'QR ସ୍କାନ୍ କରନ୍ତୁ',
+    cashReceived:  'ନଗଦ ଗ୍ରହଣ କଲେ',
+    confirmCash:   'ନଗଦ ଗ୍ରହଣ ସଫଳ ହେଲା।',
     cancelRide:    'ରାଇଡ୍ ବାତିଲ କରନ୍ତୁ',
     reportIssue:   'ସମସ୍ୟା ଜଣାନ୍ତୁ',
     callControl:   'କଣ୍ଟ୍ରୋଲ ରୁମ କଲ',
@@ -195,11 +210,18 @@ export default function Driver() {
   const [userLocation, setUserLocation] = useState(null);
   const [issueSheet, setIssueSheet]= useState(false);
   const [socketDebug, setSocketDebug] = useState([]);
+  const [toast,       setToast]       = useState(null);
   const [gpsError,   setGpsError]  = useState(false);
+  const [gpsStale,   setGpsStale]  = useState(false);
   const unwatchRef   = useRef(null);
   const pingRef      = useRef(null);
   const gpsPosRef    = useRef(null); // keep GPS pos accessible in interval closure
   const lastEmitRef  = useRef(0);    // FIX: Throttle redundant emissions
+  const lastMovementRef  = useRef(Date.now());
+  const lastGpsUpdateRef = useRef(Date.now());
+  const healthAlertSentRef = useRef(false);
+  const reconnectAttemptsRef = useRef(0);
+  const MAX_RECONNECT_ATTEMPTS = 3;
 
   // BUG FIX: Use Refs for values used in watchPosition/Interval closures to prevent stale data
   const activeRideRef = useRef(null);
@@ -223,6 +245,10 @@ export default function Driver() {
         const socket = connectSocket();
         const driverId = saved.id || saved._id;
         const vehicleType = saved.vehicleType;
+
+        // Ensure clean state before adding listeners
+        socket.off('driver:kicked');
+        socket.off('connect');
 
         if (socket.connected) {
           socket.emit('driver:register', { driverId, vehicleType });
@@ -279,6 +305,7 @@ export default function Driver() {
                 pickupLng:  liveBooking.pickupLng,
                 dropoffLat: liveBooking.dropoffLat,
                 dropoffLng: liveBooking.dropoffLng,
+                payment:    liveBooking.payment,
               };
               setActiveRide(verifiedRide);
               setActiveDriverRide(verifiedRide);
@@ -316,6 +343,22 @@ export default function Driver() {
     };
   }, []);
 
+  // ✅ BUG FIX: Move nested useEffect to top level
+  // UX Improvement: Listen for real-time approval if waiting on ID screen
+  useEffect(() => {
+    const socket = getSocket();
+    if (!socket) return;
+
+    const handleApproved = ({ vehicleId: approvedId }) => {
+      if (step === 'id' && vehicleId.trim().toUpperCase() === approvedId.toUpperCase()) {
+        handleValidateId();
+      }
+    };
+
+    socket.on('driver:approved', handleApproved);
+    return () => socket.off('driver:approved', handleApproved);
+  }, [step, vehicleId]);
+
   // ── Auth: Step 1 — validate Vehicle ID ─────────────────────
   const handleValidateId = async () => {
     if (!vehicleId.trim()) return;
@@ -342,11 +385,12 @@ export default function Driver() {
       const driverId = d.id || d._id;
 
       if (socket.connected) {
-        socket.emit('driver:register', { driverId });
+        socket.emit('driver:register', { driverId, vehicleType: d.vehicleType, token });
       }
 
+    socket.off('driver:kicked');
       // FIX #11 (login path): Re-register on every reconnect
-      const handleReconnect = () => socket.emit('driver:register', { driverId });
+      const handleReconnect = () => socket.emit('driver:register', { driverId, vehicleType: d.vehicleType, token });
       socket.on('connect', handleReconnect);
 
       socket.on('driver:kicked', ({ reason }) => {
@@ -368,52 +412,53 @@ export default function Driver() {
     } finally { setBusy(false); }
   };
 
-  // ── Panel: start duty ───────────────────────────────────────
-  const startDuty = async () => {
-    // FIX #13: Call API first — only set state on success.
-    // Previously setOnDuty(true) fired immediately, so if the API call
-    // failed the UI showed ON DUTY while backend still had driver offline.
-    try {
-      await api.setDriverDuty(true, getDriverToken());
-    } catch {
-      alert('Failed to start duty. Please check your connection and try again.');
-      return;
-    }
-    setOnDuty(true);
-    speak(t.gpsActive, lang);
-
-    // FIX: Reconnect socket + re-register.
-    // endDuty() calls disconnectSocket(). If driver toggles off then on,
-    // the socket was disconnected so emitLocation and ride requests stopped.
+  const startTracking = () => {
     const socket = connectSocket();
-    const driverId = driver?.id || driver?._id;
-    const vehicleType = driver?.vehicleType;
+    const d = driverRef.current;
+    const driverId = d?.id || d?._id;
+    const vehicleType = d?.vehicleType;
+    const token = getDriverToken();
+
     if (socket.connected) {
-      socket.emit('driver:register', { driverId, vehicleType });
+      socket.emit('driver:register', { driverId, vehicleType, token });
     } else {
-      socket.once('connect', () => socket.emit('driver:register', { driverId, vehicleType }));
+      socket.once('connect', () => socket.emit('driver:register', { driverId, vehicleType, token }));
     }
 
     const basePayload = {
       driverId,
-      vehicleId:     driver?.vehicleId,
-      type:          driver?.vehicleType,
-      vehicleNumber: driver?.vehicleNumber,
-      busName:       driver?.busName     || '',
-      routeFrom:     driver?.routeFrom   || '',
-      routeTo:       driver?.routeTo     || '',
-      routeNumber:   driver?.routeNumber || '',
-      capacity:      driver?.vehicleType === 'bus' ? 60 : 1,
+      vehicleId:     d?.vehicleId,
+      type:          d?.vehicleType,
+      vehicleNumber: d?.vehicleNumber,
+      busName:       d?.busName     || '',
+      routeFrom:     d?.routeFrom   || '',
+      routeTo:       d?.routeTo     || '',
+      routeNumber:   d?.routeNumber || '',
+      capacity:      d?.vehicleType === 'bus' ? 60 : 1,
     };
+
+    if (unwatchRef.current) unwatchRef.current();
+    setGpsError(false);
+    setGpsStale(false);
+    lastGpsUpdateRef.current = Date.now();
 
     unwatchRef.current = watchPosition(pos => {
       setGpsPos(pos);
       setGpsError(false);
+      setGpsStale(false);
       gpsPosRef.current = pos;
+      lastGpsUpdateRef.current = Date.now();
+      reconnectAttemptsRef.current = 0; // ✅ Reset attempts on successful signal
       setSpeed(Math.round((pos.speed || 0) * 3.6));
       
       // FIX: Only emit if significantly moved or 5s passed
       const now = Date.now();
+      // Track movement for health check (threshold: ~1 km/h)
+      if ((pos.speed || 0) > 0.3) {
+        lastMovementRef.current = now;
+        healthAlertSentRef.current = false;
+      }
+
       if (now - lastEmitRef.current > 5000) {
         lastEmitRef.current = now;
         const d = driverRef.current;
@@ -438,14 +483,88 @@ export default function Driver() {
       setGpsError(true);
     });
 
+    if (pingRef.current) clearInterval(pingRef.current);
     pingRef.current = setInterval(() => {
       const pos = gpsPosRef.current;
       if (pos) emitLocation({
         ...basePayload,
         lat: pos.lat, lng: pos.lng,
-        status: activeRide ? 'busy' : 'active',
+        status: activeRideRef.current ? 'busy' : 'active',
       });
+
+      // ✅ GPS Signal Check: Warning after 60s of no updates
+      const now = Date.now();
+      if (now - lastGpsUpdateRef.current > 60000) {
+        setGpsStale(true);
+      } else {
+        setGpsStale(false);
+      }
+
+      // ✅ AUTO-RECONNECT: Restart tracking if GPS is stale for 3 minutes (180s)
+      if (now - lastGpsUpdateRef.current > 180000) {
+        if (reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
+          reconnectAttemptsRef.current += 1;
+          console.log(`[Auto-Reconnect] Attempt ${reconnectAttemptsRef.current}/${MAX_RECONNECT_ATTEMPTS}. GPS stale for 3 mins. Restarting tracking...`);
+          startTracking();
+        } else {
+          console.warn('[Auto-Reconnect] Max attempts reached. GPS remains disabled/stale.');
+          // ✅ Operational Monitoring: Log the failure to the backend
+          const token = getDriverToken();
+          if (token) {
+            api.logDriverEvent({
+              event: 'MAX_RECONNECT_REACHED',
+              details: { lastGpsUpdate: new Date(lastGpsUpdateRef.current).toISOString() }
+            }, token).catch(() => {});
+          }
+          setGpsError(true);
+          setGpsStale(false);
+          if (unwatchRef.current) unwatchRef.current();
+        }
+        return;
+      }
+
+      // ✅ RIDE HEALTH CHECK: Automated ping if stationary for 5 minutes OR GPS lost for 2 minutes
+      if (activeRideRef.current && activeRideRef.current.status === 'started' && !healthAlertSentRef.current) {
+        const isStationary = now - lastMovementRef.current > 300000; // 5 mins
+        const isGpsLost    = now - lastGpsUpdateRef.current > 120000; // 2 mins
+
+        if (isStationary || isGpsLost) {
+          const s = getSocket();
+          if (s.connected) {
+            s.emit('ride:healthAlert', {
+              bookingId: activeRideRef.current.id,
+              driverId: driverRef.current?.id || driverRef.current?._id,
+              reason: isGpsLost ? 'GPS_LOST' : 'STATIONARY'
+            });
+            healthAlertSentRef.current = true;
+            console.warn(`[HealthCheck] ${isGpsLost ? 'GPS Lost' : 'Stationary'} alert sent to backend`);
+          }
+        }
+      }
     }, 10000);
+  };
+
+  // ── Panel: start duty ───────────────────────────────────────
+  const startDuty = async () => {
+    // FIX #13: Call API first — only set state on success.
+    try {
+      await api.setDriverDuty(true, getDriverToken());
+    } catch {
+      alert('Failed to start duty. Please check your connection and try again.');
+      return;
+    }
+    setOnDuty(true);
+    speak(t.gpsActive, lang);
+    reconnectAttemptsRef.current = 0; // Reset on manual duty start
+    startTracking();
+  };
+
+  const handleRetryGps = () => {
+    if (!onDuty) return;
+    playPop();
+    window.navigator?.vibrate?.(10);
+    reconnectAttemptsRef.current = 0; // Reset on manual retry
+    startTracking();
   };
 
   // ── Panel: end duty ─────────────────────────────────────────
@@ -473,7 +592,9 @@ export default function Driver() {
     if (!onDuty) return;
     const unsub = onRideRequest(req => {
       // Suppress new ride requests if driver already has an active ride
-      if (activeRide && ['accepted', 'started'].includes(activeRide.status)) return; // FIX: Check activeRide status
+      const currentRide = activeRideRef.current;
+      if (currentRide && ['accepted', 'started'].includes(currentRide.status)) return;
+
       setRideReq(req);
       speak(
         lang === 'hi' ? 'नई बुकिंग आई है।' :
@@ -483,7 +604,7 @@ export default function Driver() {
       );
     });
     return unsub;
-  }, [onDuty, lang, activeRide]);
+  }, [onDuty, lang]); // activeRide removed from deps as we use Ref inside callback
 
   useEffect(() => {
     const socket = getSocket();
@@ -492,10 +613,11 @@ export default function Driver() {
     // ── BUG FIX A ───────────────────────────────────────────────
     // Rider location handler — unchanged, just made explicit
     const handleRiderLocation = ({ bookingId, lat, lng, bearing, speed }) => {
-      if (!activeRide) return;
+      const currentRide = activeRideRef.current;
+      if (!currentRide) return;
       // Compare both as strings — activeRide.id comes from rideReq.id
       // which is the MongoDB _id cast through JSON, always a string.
-      if (String(bookingId) !== String(activeRide.id)) return;
+      if (String(bookingId) !== String(currentRide.id)) return;
       setUserLocation({ lat, lng, bearing, speed });
       setSocketDebug(d => [...d.slice(-9), {
         t: Date.now(), e: 'rider:locationUpdate',
@@ -515,8 +637,9 @@ export default function Driver() {
     //      'ride:cancelled' (broadcast) for searching-state cancels.
     //      This handler picks that up.
     const handleBookingCancelled = ({ bookingId }) => {
-      if (!activeRide || !bookingId) return; // FIX: Ensure activeRide and bookingId exist
-      if (String(bookingId) !== String(activeRide.id)) return;
+      const currentRide = activeRideRef.current;
+      if (!currentRide || !bookingId) return;
+      if (String(bookingId) !== String(currentRide.id)) return;
       clearActiveDriverRide();
       setActiveRide(null);
       setTripActive(false);
@@ -565,14 +688,29 @@ export default function Driver() {
       });
     };
 
+    const handleRiderNotification = (data) => {
+      setSocketDebug(d => [...d.slice(-9), {
+        t: Date.now(), e: 'rider:notification', d: data
+      }]);
+      
+      if (data.message) {
+        setToast(data.message);
+        speak(data.message, lang);
+        window.navigator?.vibrate?.([100, 50, 100]);
+        setTimeout(() => setToast(null), 6000);
+      }
+    };
+
     socket.on('rider:locationUpdate', handleRiderLocation);
     socket.on('booking:cancelled',    handleBookingCancelled);
     socket.on('ride:cancelled',       handleRideCancelled);
+    socket.on('rider:notification',    handleRiderNotification);
 
     return () => {
       socket.off('rider:locationUpdate', handleRiderLocation);
       socket.off('booking:cancelled',    handleBookingCancelled);
       socket.off('ride:cancelled',       handleRideCancelled);
+      socket.off('rider:notification',    handleRiderNotification);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeRide, lang]);
@@ -626,21 +764,20 @@ export default function Driver() {
     } finally { setBusy(false); }
   };
 
-  const startRide = async (otpInput) => {
-    if (!activeRide) return;
-
-    // Ensure we don't treat the React SyntheticEvent as the OTP string
-    const cleanOtp = (typeof otpInput === 'string' && /^\d{4}$/.test(otpInput)) ? otpInput : null;
-
-    // Prompt driver for the 4-digit PIN provided by the rider
-    const otp = cleanOtp || window.prompt(lang === 'hi' ? 'यात्री से 4 अंकों का पिन मांगें:' : lang === 'or' ? 'ଯାତ୍ରୀଙ୍କୁ 4 ଅଙ୍କ ବିଶିଷ୍ଟ ପିନ୍ ମାଗନ୍ତୁ:' : 'Ask passenger for the 4-digit START PIN:');
-    if (!otp) return;
-
+  const startRide = async () => {
+    if (!activeRide || busy) return;
+    
+    setBusy(true);
     try {
-      await api.startRide(activeRide.id, otp, getDriverToken());
+      // OTP is now passed as a dummy value "0000" because the backend no longer requires it
+      await api.startRide(activeRide.id, "0000", getDriverToken());
+      
       // FIX: Only update local state AFTER successful backend verification
       const startedRide = { ...activeRide, status: 'started' };
       setTripActive(true);
+      lastMovementRef.current = Date.now(); // Reset movement timer when trip starts
+      lastGpsUpdateRef.current = Date.now(); // Reset GPS timer
+      healthAlertSentRef.current = false;
       setActiveRide(startedRide);
       setActiveDriverRide(startedRide);
       setPassengers(prev => prev + 1);
@@ -676,7 +813,8 @@ export default function Driver() {
   };
 
   const completeRide = async () => {
-    if (!activeRide) return;
+    if (!activeRide || busy) return;
+    setBusy(true);
     // ── BUG FIX E ───────────────────────────────────────────────
     // Capture bookingId before state is cleared. The HTTP PUT /:id/complete
     // route already emits 'completed' to the rider. The socket.emit('trip:ended')
@@ -962,17 +1100,59 @@ export default function Driver() {
         )}
 
         {onDuty && (
-          <div className={`drv-gps-bar ${gpsError ? 'drv-gps-bar--error' : ''}`}>
-            <span className="live-dot" style={{width:7,height:7, background: gpsError ? 'var(--danger)' : undefined}}/>
-            <span>{gpsError ? 'GPS Error — check location permissions' : t.gpsActive}</span>
-            {!gpsError && gpsPos && <span className="drv-gps-coords">{gpsPos.lat.toFixed(4)}, {gpsPos.lng.toFixed(4)}</span>}
+          <div 
+            className={`drv-gps-bar ${gpsError ? 'drv-gps-bar--error' : gpsStale ? 'drv-gps-bar--warning' : ''}`}
+            style={gpsStale && !gpsError ? { background: '#EAB308', color: 'white' } : {}}
+          >
+            <span className="live-dot" style={{width:7,height:7, background: (gpsError || gpsStale) ? 'white' : undefined}}/>
+            <span style={{flex: 1}}>
+              {gpsError ? 'GPS Error — check permissions' : 
+               gpsStale ? 'GPS Signal Stale — checking connection...' : 
+               t.gpsActive}
+            </span>
+            {(gpsError || gpsStale) && (
+              <button 
+                className="btn btn--ghost" 
+                style={{fontSize:10, padding: '4px 10px', height: 'auto', border: '1px solid white', color: 'white'}}
+                onClick={handleRetryGps}
+              >
+                Retry GPS
+              </button>
+            )}
+            {!gpsError && !gpsStale && gpsPos && <span className="drv-gps-coords">{gpsPos.lat.toFixed(4)}, {gpsPos.lng.toFixed(4)}</span>}
           </div>
         )}
 
         {activeRide && (
           <div className="drv-combined-ride-area">
           <div className="drv-active-ride-card card" style={{margin:'12px 16px',padding:'16px'}}>
-             {/* ... UI Content ... */}
+            {!tripActive && activeRide.pickupLat && activeRide.pickupLng && (
+              <button 
+                className="btn btn--secondary btn--full" 
+                style={{marginBottom: 12, height: 44, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8}}
+                onClick={() => window.open(`https://www.openstreetmap.org/?mlat=${activeRide.pickupLat}&mlon=${activeRide.pickupLng}#map=17/${activeRide.pickupLat}/${activeRide.pickupLng}`, '_blank')}
+              >
+                🗺️ {t.navigate}
+              </button>
+            )}
+            {tripActive && activeRide.dropoffLat && activeRide.dropoffLng && (
+              <button 
+                className="btn btn--secondary btn--full" 
+                style={{marginBottom: 12, height: 44, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8}}
+                onClick={() => window.open(`https://www.openstreetmap.org/?mlat=${activeRide.dropoffLat}&mlon=${activeRide.dropoffLng}#map=17/${activeRide.dropoffLat}/${activeRide.dropoffLng}`, '_blank')}
+              >
+                🏁 {t.navigateDrop}
+              </button>
+            )}
+             {activeRide.payment === 'Cash' && tripActive && (
+               <button 
+                 className="btn btn--success btn--full" 
+                 style={{marginTop: 16, height: 48, fontWeight: 700, fontSize: 14}}
+                 onClick={(e) => { e.target.disabled = true; e.target.innerText = `✅ ${t.cashReceived}`; alert(t.confirmCash); }}
+               >
+                 💵 {t.cashReceived}
+               </button>
+             )}
           </div>
           <div className="drv-user-location-card card" style={{margin:'0 16px 16px',padding:'12px 14px'}}>
              {/* ... UI Content ... */}
@@ -1048,6 +1228,9 @@ export default function Driver() {
 
         {onDuty && (
           <div className="drv-actions">
+            <button className="drv-action-btn" onClick={() => alert('Feature integration: This would open a live QR scanner to follow the passenger tracking link.')}>
+              <QrIcon /><span>{t.scanQr}</span>
+            </button>
             <button className="drv-action-btn" onClick={() => setIssueSheet(true)}>
               <WarningIcon /><span>{t.reportIssue}</span>
             </button>
@@ -1081,6 +1264,34 @@ export default function Driver() {
           </div>
         )}
       </div>
+
+      {/* Rider Notification Toast */}
+      {toast && (
+        <div className="slide-up" style={{
+          position: 'fixed', top: 20, left: 16, right: 16, zIndex: 10000,
+          background: 'rgba(13, 71, 161, 0.95)', color: 'white',
+          padding: '12px 16px', borderRadius: 12, display: 'flex', 
+          alignItems: 'center', gap: 12, boxShadow: '0 8px 32px rgba(0,0,0,0.2)',
+          backdropFilter: 'blur(10px)', border: '1px solid rgba(255,255,255,0.1)'
+        }}>
+          <div style={{
+            width: 32, height: 32, borderRadius: '50%', background: 'rgba(255,255,255,0.2)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18
+          }}>🔔</div>
+          <div style={{ flex: 1, fontSize: 14, fontWeight: 600 }}>{toast}</div>
+          <button 
+            onClick={() => setToast(null)}
+            style={{
+              background: 'none', border: 'none', color: 'white', 
+              opacity: 0.7, padding: 4, cursor: 'pointer', display: 'flex'
+            }}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <path d="M18 6L6 18M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+      )}
 
       <DebugPanel />
 
@@ -1181,3 +1392,4 @@ function LockIcon()     { return <svg width="32" height="32" viewBox="0 0 24 24"
 function WarningIcon()  { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>; }
 function PhoneIcon()    { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 10.8a19.79 19.79 0 01-3.07-8.67A2 2 0 012 0h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L6.09 7.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/></svg>; }
 function SosIcon()      { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>; }
+function QrIcon()       { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>; }

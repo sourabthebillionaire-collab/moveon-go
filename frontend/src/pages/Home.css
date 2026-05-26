@@ -282,7 +282,7 @@
   opacity: 0;
   transition: opacity 0.2s;
 }
-.home-veh:hover  { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,0.1); }
+.home-veh:hover  { transform: translateY(-4px) scale(1.02); box-shadow: 0 10px 25px rgba(0,0,0,0.12); }
 .home-veh:hover::before { opacity: 1; }
 .home-veh:active { transform: scale(0.97); }
 

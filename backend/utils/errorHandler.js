@@ -16,6 +16,19 @@ const asyncHandler = (fn) => (req, res, next) => {
   });
 };
 
+// Async socket event wrapper to catch and log errors
+const socketHandler = (socket, fn) => (...args) => {
+  Promise.resolve(fn(...args)).catch((err) => {
+    logger.error(`Socket Event Error [${socket.id}]: ${err.message}`, {
+      stack: err.stack,
+      socketId: socket.id,
+      event: fn.name || 'anonymous',
+    });
+    // Notify the client that a real-time error occurred
+    socket.emit('error', { message: 'A real-time update failed. Please try again.' });
+  });
+};
+
 // Global error handler middleware
 const errorHandler = (err, req, res, next) => {
   err.statusCode = err.statusCode || 500;
@@ -34,4 +47,4 @@ const errorHandler = (err, req, res, next) => {
   });
 };
 
-module.exports = { AppError, asyncHandler, errorHandler };
+module.exports = { AppError, asyncHandler, socketHandler, errorHandler };
