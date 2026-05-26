@@ -262,15 +262,23 @@ export default function Driver() {
         const handleReconnect = () => {
           const token = getDriverToken();
           socket.emit('driver:register', { driverId, vehicleType, token });
-          console.log('[Driver] Registered with server:', driverId);
           setSocketConnected(true);
+          setSocketDebug(d => [...d.slice(-9), { t: Date.now(), e: 'socket:register_attempt', d: { driverId, vehicleType } }]);
         };
 
-        if (socket.connected) setSocketConnected(true);
+        if (socket.connected) {
+          setSocketConnected(true);
+          handleReconnect();
+        }
+
         socket.on('connect', handleReconnect);
-        socket.on('disconnect', () => setSocketConnected(false));
+        socket.on('disconnect', (reason) => {
+          setSocketConnected(false);
+          setSocketDebug(d => [...d.slice(-9), { t: Date.now(), e: 'socket:disconnect', d: { reason } }]);
+        });
 
         socket.on('driver:kicked', ({ reason }) => {
+          setSocketDebug(d => [...d.slice(-9), { t: Date.now(), e: 'driver:kicked', d: { reason } }]);
           unwatchRef.current?.();
           clearInterval(pingRef.current);
           disconnectSocket();
@@ -615,6 +623,7 @@ export default function Driver() {
       if (currentRide && ['accepted', 'started'].includes(currentRide.status)) return;
 
       setRideReq(req);
+      setSocketDebug(d => [...d.slice(-9), { t: Date.now(), e: 'ride:request_received', d: req }]);
       speak(
         lang === 'hi' ? 'नई बुकिंग आई है।' :
         lang === 'or' ? 'ନୂଆ ବୁକିଂ ଆସିଛି।' :
