@@ -329,11 +329,13 @@ export default function Driver() {
               setTripActive(liveBooking.status === 'started');
               setPassengers(liveBooking.status === 'started' ? 1 : 0);
             } else {
-              clearActiveDriverRide(); 
+              clearActiveDriverRide(); // stale — gone from DB, clear local storage
               setActiveRide(null);
             }
           } catch {
             // Network failure — keep stored ride optimistically but don't set tripActive
+            // This path means the backend couldn't verify the ride, so it's safer
+            // to assume it's not active for dispatch purposes.
             setActiveRide(storedRide);
             setTripActive(false);
             setOnDuty(true);
@@ -408,9 +410,13 @@ export default function Driver() {
       const handleReconnect = () => {
         socket.emit('driver:register', { driverId, vehicleType: d.vehicleType, token });
         setSocketConnected(true);
+        setSocketDebug(d => [...d.slice(-9), { t: Date.now(), e: 'socket:register_success', d: { driverId, vehicleType: d.vehicleType } }]);
       };
 
-      if (socket.connected) setSocketConnected(true);
+      if (socket.connected) {
+        setSocketConnected(true);
+        handleReconnect(); // Call immediately if already connected
+      }
 
       socket.off('driver:kicked');
       // FIX #11 (login path): Re-register on every reconnect
@@ -631,8 +637,8 @@ export default function Driver() {
         lang,
       );
     });
-    return unsub;
-  }, [onDuty, lang]); // activeRide removed from deps as we use Ref inside callback
+    return unsub; // Cleanup function
+  }, [onDuty, lang, activeRideRef.current]); // Added activeRideRef.current to deps
 
   useEffect(() => {
     const socket = getSocket();

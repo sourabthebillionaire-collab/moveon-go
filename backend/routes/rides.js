@@ -154,7 +154,7 @@ router.put('/:rideId/cancel', protectDriver, asyncHandler(async (req, res) => {
     global.io.arrivedNotified?.delete(String(rideId));
     global.io.driverToBooking?.delete(String(req.driver._id));
     
-    // FIX: Consistent room naming for rider notification
+    // ✅ FIX: Consistent room naming for rider notification
     const roomName = `booking:${rideId}`;
     if (global.io) {
       global.io.to(roomName).emit(roomName, {

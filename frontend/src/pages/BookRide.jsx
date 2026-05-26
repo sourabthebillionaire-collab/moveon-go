@@ -188,7 +188,7 @@ export default function BookRide() {
         setCountdown(remaining);
 
         // Atomic update of state
-        setBookingId(b._id || b.id);
+        setBookingId(b._id || b.id); // Ensure consistent ID usage
         setBooking(b.status === 'searching' ? 'searching' : 'found');
         setRideStatus(b.status);
         if (b.startOTP) setOtp(b.startOTP);
@@ -258,9 +258,9 @@ export default function BookRide() {
     const unsubUpdate = onBookingUpdate(bookingId, (data) => {
       setSocketDebug(d => [...d.slice(-9), { t: Date.now(), e: `booking_event:${data.action}`, d: data }]);
 
-      // ✅ STRICT SYNC: Only transition to 'found' if the action is a fresh 'accept' 
-      // or a 'sync' that contains a valid, currently assigned driver.
-      if ((data.action === 'accept' && data.driver?.name) || (data.action === 'sync' && data.driver?.driverId)) {
+      // ✅ STRICT SYNC: Only transition to 'found' if the action is a fresh 'accept' or a 'sync'
+      // that contains a valid, currently assigned driver. Ensure driver.name exists for UI.
+      if ((data.action === 'accept' || data.action === 'sync') && data.driver?.name) {
         playTada();
         setDriver(data.driver);
         driverIdRef.current = data.driver.driverId;
@@ -347,7 +347,7 @@ export default function BookRide() {
           rating: b.driverId.rating,
           eta: b.eta || '3-5 min'
         });
-        driverIdRef.current = b.driverId._id;
+        driverIdRef.current = b.driverId._id; // Ensure driverIdRef is updated for location tracking
         if (b.startOTP) setOtp(b.startOTP);
         setBooking('found');
         setRideStatus(b.status);

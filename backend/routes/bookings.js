@@ -56,7 +56,7 @@ router.post('/', protect, bookingLimiter, asyncHandler(async (req, res) => {
 
   if (global.io) {
     // ✅ PERFORMANCE: Target only drivers of the requested vehicle type
-    global.io.to(`drivers:${type}`).emit('ride:request', {
+    global.io.to(`drivers:${String(type).toLowerCase()}`).emit('ride:request', {
       id:         booking._id,
       type,       pickup,      dropoff,
       fare,       fareAmount:  amount,
