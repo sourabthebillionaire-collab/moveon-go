@@ -178,10 +178,25 @@ module.exports = function initSocket(io) {
 
       connectedDrivers.set(socket.id, dId);
       socket.join(`driver:${dId}`);
+      
       // ✅ DISPATCH: Join a room for their vehicle type to receive ride requests
       if (vehicleType) {
-        socket.join(`drivers:${vehicleType}`);
+        const roomName = `drivers:${String(vehicleType).toLowerCase()}`;
+        socket.join(roomName);
         logger.info(`[Socket] Driver ${dId} joined dispatch pool: drivers:${vehicleType}`);
+      }
+
+      // ✅ RECOVERY: Restore active booking mapping if driver is already mid-trip
+      const activeBooking = await Booking.findOne({ 
+        driverId: dId, 
+        status: { $in: ['accepted', 'started'] } 
+      }).select('_id').lean();
+      
+      if (activeBooking) {
+        const bId = String(activeBooking._id);
+        activeBookings.set(bId, dId);
+        driverToBooking.set(dId, bId);
+        logger.info(`[Socket] Restored active mapping for Driver ${dId} -> Booking ${bId}`);
       }
     });
 

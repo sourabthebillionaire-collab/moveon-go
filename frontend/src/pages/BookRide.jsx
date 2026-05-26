@@ -258,8 +258,9 @@ export default function BookRide() {
     const unsubUpdate = onBookingUpdate(bookingId, (data) => {
       setSocketDebug(d => [...d.slice(-9), { t: Date.now(), e: `booking_event:${data.action}`, d: data }]);
 
-      // Ensure we actually have driver data before flipping the UI to 'found'
-      if ((data.action === 'accept' || data.action === 'sync') && data.driver?.name) {
+      // ✅ STRICT SYNC: Only transition to 'found' if the action is a fresh 'accept' 
+      // or a 'sync' that contains a valid, currently assigned driver.
+      if ((data.action === 'accept' && data.driver?.name) || (data.action === 'sync' && data.driver?.driverId)) {
         playTada();
         setDriver(data.driver);
         driverIdRef.current = data.driver.driverId;

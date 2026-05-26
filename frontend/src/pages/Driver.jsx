@@ -216,6 +216,7 @@ export default function Driver() {
   const [toast,       setToast]       = useState(null);
   const [gpsError,   setGpsError]  = useState(false);
   const [gpsStale,   setGpsStale]  = useState(false);
+  const [socketConnected, setSocketConnected] = useState(false);
   const [maxAttemptsReached, setMaxAttemptsReached] = useState(false);
   const unwatchRef   = useRef(null);
   const pingRef      = useRef(null);
@@ -262,10 +263,12 @@ export default function Driver() {
           const token = getDriverToken();
           socket.emit('driver:register', { driverId, vehicleType, token });
           console.log('[Driver] Registered with server:', driverId);
+          setSocketConnected(true);
         };
 
-        if (socket.connected) handleReconnect();
+        if (socket.connected) setSocketConnected(true);
         socket.on('connect', handleReconnect);
+        socket.on('disconnect', () => setSocketConnected(false));
 
         socket.on('driver:kicked', ({ reason }) => {
           unwatchRef.current?.();
@@ -318,7 +321,8 @@ export default function Driver() {
               setTripActive(liveBooking.status === 'started');
               setPassengers(liveBooking.status === 'started' ? 1 : 0);
             } else {
-              clearActiveDriverRide(); // stale — gone from DB
+              clearActiveDriverRide(); 
+              setActiveRide(null);
             }
           } catch {
             // Network failure — keep stored ride optimistically but don't set tripActive
@@ -326,6 +330,11 @@ export default function Driver() {
             setTripActive(false);
             setOnDuty(true);
           }
+        }
+
+        // ✅ CRITICAL FIX: Ensure tracking starts immediately on session restore if On Duty
+        if (profile?.driver?.onDuty || storedRide) {
+          startTracking();
         }
 
         setStep('panel');
@@ -388,14 +397,17 @@ export default function Driver() {
       const socket = connectSocket();
       const driverId = d.id || d._id;
 
-      if (socket.connected) {
+      const handleReconnect = () => {
         socket.emit('driver:register', { driverId, vehicleType: d.vehicleType, token });
-      }
+        setSocketConnected(true);
+      };
 
-    socket.off('driver:kicked');
+      if (socket.connected) setSocketConnected(true);
+
+      socket.off('driver:kicked');
       // FIX #11 (login path): Re-register on every reconnect
-      const handleReconnect = () => socket.emit('driver:register', { driverId, vehicleType: d.vehicleType, token });
       socket.on('connect', handleReconnect);
+      socket.on('disconnect', () => setSocketConnected(false));
 
       socket.on('driver:kicked', ({ reason }) => {
         unwatchRef.current?.();
@@ -1084,6 +1096,18 @@ export default function Driver() {
               <div className="drv-status-card__name">{driver?.name || 'Driver'}</div>
               <div className="drv-status-card__id">{driver?.vehicleId || vehicleId}</div>
             </div>
+            {onDuty && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                <div style={{ 
+                  width: 6, height: 6, borderRadius: '50%', 
+                  background: socketConnected ? 'var(--green-600)' : 'var(--danger)',
+                  boxShadow: socketConnected ? '0 0 6px var(--green-600)' : 'none'
+                }} />
+                <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--gray-500)', letterSpacing: '0.4px' }}>
+                  {socketConnected ? 'SERVER CONNECTED' : 'SERVER DISCONNECTED'}
+                </span>
+              </div>
+            )}
           </div>
           <div className={`drv-status-badge ${onDuty ? 'on' : 'off'}`}>
             {onDuty && <span className="live-dot" style={{width:7,height:7,background:'white'}}/>}
