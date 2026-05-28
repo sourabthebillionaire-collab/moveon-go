@@ -16,7 +16,8 @@ router.get('/routes', asyncHandler(async (req, res) => {
 
       // FIX: Deterministic ETA instead of Math.random()
       // Use the route ID to create a stable "base" time that doesn't jump on refresh
-      const routeSeed = parseInt(String(route._id).slice(-4), 16) || 1;
+      // This is a deterministic *mock* ETA, not a real-time calculation.
+      const routeSeed = parseInt(String(route._id).slice(-4), 16) || 1; 
       const mockEta = (routeSeed % 10) + 2; 
 
       return {

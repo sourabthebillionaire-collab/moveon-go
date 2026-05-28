@@ -37,6 +37,9 @@ router.post('/:rideId/respond', protectDriver, asyncHandler(async (req, res) => 
         driverId:      String(req.driver._id),
       };
 
+      // Fetch initial position for the acceptance payload
+      const currentPos = global.io?.activeVehiclePositions?.get(String(req.driver._id));
+
       if (global.io && booking) {
         if (global.io.activeBookings) {
           global.io.activeBookings.set(String(rideId), String(req.driver._id));
@@ -44,10 +47,10 @@ router.post('/:rideId/respond', protectDriver, asyncHandler(async (req, res) => 
         if (global.io.driverToBooking) {
           global.io.driverToBooking.set(String(req.driver._id), String(rideId));
         }
-        // BUG FIX: Include OTP in the payload so the rider sees it immediately
         const eventPayload = { 
           action: 'accept', 
           driver: driverPayload,
+          location: currentPos ? { lat: currentPos.lat, lng: currentPos.lng } : null,
           otp:    booking.startOTP 
         };
         global.io.to(`booking:${rideId}`).emit(`booking:${rideId}`, eventPayload);
@@ -59,9 +62,7 @@ router.post('/:rideId/respond', protectDriver, asyncHandler(async (req, res) => 
         return res.status(404).json({ message: 'Ride not found.' });
       }
 
-      if (global.io) {
-        global.io.to(`booking:${rideId}`).emit(`booking:${rideId}`, { action: 'decline' });
-      }
+      // Silent decline for rider — dispatch continues or searching remains active
     }
 
     res.json({ message: `Ride ${action}ed.` });
@@ -99,6 +100,7 @@ router.put('/:rideId/start', protectDriver, asyncHandler(async (req, res) => {
     global.io.to(`booking:${rideId}`).emit(`booking:${rideId}`, payload);
   }
 
+    // If a driver declines, the booking status remains 'searching' for other drivers.
   res.json({ message: 'Ride started.' });
 }));
 
@@ -126,6 +128,7 @@ router.put('/:rideId/complete', protectDriver, asyncHandler(async (req, res) => 
     global.io.to(`booking:${rideId}`).emit(`booking:${rideId}`, payload);
     global.io.activeBookings?.delete(String(rideId));
     global.io.arrivedNotified?.delete(String(rideId));
+    // FIX: Clear arrivedNotified for this booking
     global.io.driverToBooking?.delete(String(req.driver._id));
   }
 
@@ -151,16 +154,12 @@ router.put('/:rideId/cancel', protectDriver, asyncHandler(async (req, res) => {
     const payload = { action: 'cancelled', bookingId: String(rideId), driverId: String(req.driver._id) };
     global.io.to(`booking:${rideId}`).emit(`booking:${rideId}`, payload);
     global.io.activeBookings?.delete(String(rideId));
+    // FIX: Clear arrivedNotified for this booking
     global.io.arrivedNotified?.delete(String(rideId));
     global.io.driverToBooking?.delete(String(req.driver._id));
     
-    // ✅ FIX: Consistent room naming for rider notification
-    const roomName = `booking:${rideId}`;
-    if (global.io) {
-      global.io.to(roomName).emit(roomName, {
-        action: 'cancelled', bookingId: String(rideId), message: 'Driver cancelled the ride.'
-      });
-    }
+    // Payload already includes action: 'cancelled' and notifies the rider's room
+    logger.info(`Driver cancelled — notified rider room booking:${rideId}`, { bookingId: rideId });
   }
 
   res.json({ message: 'Ride cancelled.' });

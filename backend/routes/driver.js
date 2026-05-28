@@ -45,7 +45,7 @@ router.post('/register', asyncHandler(async (req, res) => {
     return res.status(400).json({ message: 'PIN must be exactly 4 digits.' });
   }
 
-  if (!['bus', 'auto', 'cab'].includes(vehicleType)) {
+  if (!['bus', 'auto', 'cab', 'bike'].includes(vehicleType)) {
     logger.warn(`Driver register: invalid vehicle type: ${vehicleType}`);
     return res.status(400).json({ message: 'Invalid vehicle type.' });
   }

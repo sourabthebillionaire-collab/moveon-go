@@ -62,7 +62,7 @@ router.get('/stats', adminAuth, asyncHandler(async (req, res) => {
       Driver.countDocuments({ isActive: true }),
       Driver.countDocuments({ isApproved: false, isActive: true }),
       Driver.countDocuments({ onDuty: true, isActive: true }),
-      Booking.countDocuments(),
+      Booking.countDocuments({ status: { $ne: 'cancelled' } }), // Exclude cancelled bookings from total
       Booking.countDocuments({ status: 'completed' }),
       Booking.countDocuments({ createdAt: { $gte: new Date(new Date().setUTCHours(0,0,0,0)) } }),
     ]);
@@ -128,7 +128,7 @@ router.put('/drivers/:id/reject', adminAuth, asyncHandler(async (req, res) => {
         if (bookingId) {
             const room = `booking:${bookingId}`;
             global.io.to(room).emit(room, {
-              action: 'cancelled',
+              action: 'booking:statusUpdate', // Use a distinct event name
               message: 'Your ride was cancelled due to a driver account issue.'
             });
             global.io.in(room).socketsLeave(room);
@@ -163,7 +163,7 @@ router.delete('/drivers/:id', adminAuth, asyncHandler(async (req, res) => {
         if (bookingId) {
             const room = `booking:${bookingId}`;
             global.io.to(room).emit(room, {
-              action: 'cancelled',
+              action: 'booking:statusUpdate', // Use a distinct event name
               message: 'Your driver is no longer available.'
             });
             global.io.in(room).socketsLeave(room);

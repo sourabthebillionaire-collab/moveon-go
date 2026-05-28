@@ -59,6 +59,8 @@ const bookingSchema = new mongoose.Schema({
   status:        { type: String, enum: ['searching', 'accepted', 'started', 'completed', 'cancelled'], default: 'searching' },
   acceptedAt:    { type: Date },
   completedAt:   { type: Date },
+  startOTP:      { type: String },
+  paid:          { type: Boolean, default: false }
 }, { timestamps: true });
 
 const busRouteSchema = new mongoose.Schema({

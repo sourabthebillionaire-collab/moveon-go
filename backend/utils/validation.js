@@ -31,14 +31,14 @@ const profileUpdateSchema = joi.object({
 const driverRegisterSchema = joi.object({
   name: joi.string().min(3).max(100).required(),
   phone: joi.string().regex(/^[0-9+\-\s()]{10,}$/).required(),
-  email: joi.string().email().required(),
-  vehicleType: joi.string().valid('auto', 'cab', 'bike').required(),
+  email: joi.string().email().optional().allow(''), // Made optional to align with driver.js
+  vehicleType: joi.string().valid('auto', 'cab', 'bike', 'bus').required(), // Added 'bus'
   vehicleNumber: joi.string().min(5).max(20).required(),
   pin: joi.string().length(4).required().messages({
     'string.length': 'PIN must be 4 digits',
   }),
-  licenseNumber: joi.string().min(8).max(20).required(),
-  aadharNumber: joi.string().length(12).required(),
+  licenseNumber: joi.string().min(8).max(20).required(), // Kept as required
+  // aadharNumber is not stored in the Driver model, so removed from schema
 });
 
 const driverLoginSchema = joi.object({
@@ -71,7 +71,7 @@ const bookingCreateSchema = joi.object({
     lng: joi.number().required(),
   }).required(),
   fare: joi.string().optional(),
-  fareAmount: joi.number().required(),
+  fareAmount: joi.number().min(0).required(), // Ensure fareAmount is non-negative
   payment: joi.string().valid('cash', 'card', 'wallet').required(),
   distance: joi.string().optional(),
   duration: joi.string().optional(),

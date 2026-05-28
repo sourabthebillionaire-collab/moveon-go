@@ -30,7 +30,7 @@ router.post('/', protect, bookingLimiter, asyncHandler(async (req, res) => {
     return res.status(400).json({ message: 'Invalid pickup or drop-off coordinates.' });
   }
 
-  const amount = (fareAmount !== undefined && fareAmount !== null) ? fareAmount : 50;
+  const amount = fareAmount; // fareAmount is now required by schema, no default here
   
   // Ola/Uber Style: Generate a 4-digit OTP for the passenger to give to the driver
   // This ensures the ride only starts when the passenger is physically present.
@@ -144,6 +144,7 @@ router.delete('/:id', protect, asyncHandler(async (req, res) => {
       global.io.activeBookings.delete(String(req.params.id));
     }
     global.io.arrivedNotified?.delete(String(req.params.id));
+    // FIX: Clear arrivedNotified for this booking
     if (booking.driverId && global.io.driverToBooking) {
       global.io.driverToBooking.delete(String(booking.driverId));
     }

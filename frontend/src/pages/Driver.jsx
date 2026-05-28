@@ -324,7 +324,6 @@ export default function Driver() {
               };
               setActiveRide(verifiedRide);
               setActiveDriverRide(verifiedRide);
-              joinBookingRoom(verifiedRide.id);
               setOnDuty(true);
               setTripActive(liveBooking.status === 'started');
               setPassengers(liveBooking.status === 'started' ? 1 : 0);
@@ -767,7 +766,6 @@ export default function Driver() {
       const acceptedRide = { ...rideReq, id: rideReq.id, status: 'accepted' };
       setActiveRide(acceptedRide);
       setActiveDriverRide(acceptedRide);
-      joinBookingRoom(rideReq.id);
       setRideReq(null);
       setUserLocation(null);
       setTripActive(false);

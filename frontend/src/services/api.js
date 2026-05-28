@@ -128,8 +128,8 @@ export const api = {
     get('/bookings/driver-active', token),
 
   // Driver ride lifecycle
-  startRide: (bookingId, otp, token) => 
-    put(`/rides/${bookingId}/start`, { otp: String(otp) }, token),
+  startRide: (bookingId, token) => // OTP check removed on backend, so no need to send it
+    put(`/rides/${bookingId}/start`, null, token),
   completeRide: (bookingId, token) =>
     put(`/rides/${bookingId}/complete`, null, token),
   cancelRide: (bookingId, token) =>

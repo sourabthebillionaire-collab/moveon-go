@@ -68,6 +68,8 @@ const io = new Server(server, {
 });
 io.activeBookings = new Map(); // FIX: Initialize tracking map to prevent undefined errors in routes
 io.driverToBooking = new Map(); // FIX: Initialize driver mapping
+io.activeVehiclePositions = new Map(); // FIX: Shared tracking for live coordinates
+io.arrivedNotified = new Set(); // FIX: Track arrival alerts to prevent spam
 global.io = io;
 require('./socket/index')(io);
 

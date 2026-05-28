@@ -288,6 +288,8 @@ export default function BookRide() {
         handleBookingTermination('driver_offline');
       } else if (data.action === 'driver_arrived') {
         setSocketDebug(prev => [...prev, { t: Date.now(), e: 'info', d: 'Driver has arrived!' }]);
+        playTada();
+        alert('Driver has arrived at the pickup location!');
       } else if (data.action === 'health_alert') {
         setSocketDebug(prev => [...prev, { t: Date.now(), e: 'health_check', d: data.message }]);
       }
@@ -612,7 +614,21 @@ export default function BookRide() {
             </a>
           </div>
           
-          <div className="br-driver-eta">Arriving in <span className="highlight">{driver.eta||'4 mins'}</span></div>
+          <div className="br-driver-eta">
+            {driverLocation && pickupCoords ? (
+              (() => {
+                const R = 6371;
+                const dLat = (pickupCoords.lat - driverLocation.lat) * Math.PI / 180;
+                const dLon = (pickupCoords.lng - driverLocation.lng) * Math.PI / 180;
+                const a = Math.sin(dLat/2)**2 + Math.cos(driverLocation.lat*Math.PI/180) * Math.cos(pickupCoords.lat*Math.PI/180) * Math.sin(dLon/2)**2;
+                const distKm = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+                const mins = Math.max(1, Math.ceil(distKm * 3)); // Assume ~20km/h
+                return <>Arriving in <span className="highlight">{mins} min{mins > 1 ? 's' : ''} ({distKm.toFixed(1)} km)</span></>;
+              })()
+            ) : (
+              <>Arriving in <span className="highlight">{driver.eta||'4 mins'}</span></>
+            )}
+          </div>
           
           <div className="br-driver-details">
             <div className="br-det-item">📏 {route?.distanceKm || '--'} km</div>

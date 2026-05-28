@@ -67,8 +67,9 @@ export function onRideRequest(cb) {
   const s = getSocket();
 
   const attach = () => {
-    s.off('ride:request', cb); // prevent duplicate listener on reconnect
-    s.on('ride:request', cb);
+    // Ensure only one listener is active for this specific callback instance
+    s.off('ride:request', cb); 
+    s.on('ride:request', cb); 
   };
 
   if (s.connected) attach();
@@ -127,7 +128,8 @@ export function onBookingResponse(bookingId, cb) {
   const s = getSocket();
   const eventName = `booking:${bookingId}`;
   const handler = (data) => {
-    try { console.debug('[Socket] booking event', eventName, data); } catch (e) {}
+    // Using console.debug for less intrusive logging
+    if (import.meta.env.DEV) console.debug('[Socket] booking event', eventName, data);
     cb(data);
   };
   s.on(eventName, handler);
