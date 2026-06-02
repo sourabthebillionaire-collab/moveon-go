@@ -23,18 +23,19 @@ module.exports = function initSocket(io) {
 
     // ── Rider: send snapshot + join their booking room ──────────
     socket.on('rider:connected', socketHandler(socket, (data) => {
-      const { lat, lng } = data || {};
+      const { lat, lng, radius } = data || {};
       // Validate lat/lng before using in distance calculation
       const isNum = (v) => typeof v === 'number' && !isNaN(v);
       if (!isNum(lat) || !isNum(lng)) return; // Do not filter if coords are invalid
 
       let snapshot = Array.from(activeVehiclePositions.values());
+      const searchRadius = typeof radius === 'number' ? radius : 20;
       // ✅ PERFORMANCE: Filter snapshot to only show vehicles within a 20km radius.
       // This significantly reduces the payload size and prevents client-side rendering lag.
       if (lat != null && lng != null) {
         snapshot = snapshot.filter(v => {
           if (v.lat == null || v.lng == null) return false;
-          return getDist(lat, lng, v.lat, v.lng) <= 20;
+          return getDist(lat, lng, v.lat, v.lng) <= searchRadius;
         });
       }
 

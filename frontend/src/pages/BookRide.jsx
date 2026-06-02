@@ -153,6 +153,12 @@ export default function BookRide() {
   const [showQr,       setShowQr]       = useState(false);
   const [driverOffline, setDriverOffline] = useState(false);
   const [isBoarded,    setIsBoarded]    = useState(false);
+  const [toast,         setToast]       = useState(null);
+
+  const showToast = (msg) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 6000);
+  };
   const dynamicConfig = useConfig();
   
   const [rating,        setRating]        = useState(0);
@@ -232,7 +238,6 @@ export default function BookRide() {
     if (roomUnsubRef.current) roomUnsubRef.current();
     roomUnsubRef.current = null;
     
-    stopPolling();
     clearActiveBooking();
     setBooking(finalStatus);
     setRideStatus(null);

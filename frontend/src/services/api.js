@@ -140,6 +140,8 @@ export const api = {
     put(`/rides/${bookingId}/cancel`, null, token),
   riderBoarded: (bookingId, token) =>
     put(`/rides/${bookingId}/boarded`, null, token),
+  submitRideFeedback: (rideId, data, token) =>
+    post(`/rides/${rideId}/feedback`, data, token),
 
   // ── Fare ──────────────────────────────────────────────────────
   getFareEstimate: (from, to, vehicleType) =>

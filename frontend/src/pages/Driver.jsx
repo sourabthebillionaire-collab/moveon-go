@@ -5,6 +5,7 @@ import api from '../services/api';
 import { emitLocation, onRideRequest, connectSocket, disconnectSocket, getSocket, joinBookingRoom } from '../services/socket';
 import { setDriverSession, getDriver, getDriverToken, clearDriverSession, getActiveDriverRide, setActiveDriverRide, clearActiveDriverRide } from '../services/storage';
 import { watchPosition } from '../services/geocoding';
+import { useConfig } from '../context/ConfigContext';
 import './Driver.css';
 
 // ── Language strings ──────────────────────────────────────────
@@ -219,6 +220,7 @@ export default function Driver() {
   const [socketConnected, setSocketConnected] = useState(false);
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [maxAttemptsReached, setMaxAttemptsReached] = useState(false);
+  const dynamicConfig = useConfig();
   const unwatchRef   = useRef(null);
   const pingRef      = useRef(null);
   const wakeLockRef  = useRef(null);
@@ -1042,7 +1044,7 @@ export default function Driver() {
       status: 'SOS',
     });
     setToast('SOS alert sent. Calling control room...'); 
-    window.location.href = `tel:${import.meta.env.VITE_SUPPORT_PHONE || '+910000000000'}`;
+    window.location.href = `tel:${dynamicConfig?.supportPhone || import.meta.env.VITE_SUPPORT_PHONE || '+910000000000'}`;
   };
 
   // ── Sign out ─────────────────────────────────────────────────
@@ -1110,7 +1112,7 @@ export default function Driver() {
           </button>
         </div>
 
-        <p className="drv-auth-note">Vehicle IDs are assigned by admin. Contact {import.meta.env.VITE_SUPPORT_PHONE || 'Support'} for registration.</p>
+        <p className="drv-auth-note">Vehicle IDs are assigned by admin. Contact {dynamicConfig?.supportPhone || import.meta.env.VITE_SUPPORT_PHONE || 'Support'} for registration.</p>
       </div>
     </div>
   );
