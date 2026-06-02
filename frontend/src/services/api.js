@@ -71,8 +71,8 @@ export const api = {
   validateVehicleId: (vehicleId) =>
     get(`/driver/validate/${vehicleId}`),
 
-  driverLogin: (vehicleId, pin) =>
-    post('/driver/login', { vehicleId, pin }),
+  driverLogin: (vehicleId, pin, fcmToken) =>
+    post('/driver/login', { vehicleId, pin, fcmToken }),
 
   getDriverProfile: (token) =>
     get('/driver/me', token),
@@ -104,6 +104,10 @@ export const api = {
 
   getVehicle: (vehicleId) =>
     get(`/vehicles/${vehicleId}`),
+
+  // ── Config ────────────────────────────────────────────────────
+  getAppConfig: () =>
+    get('/config'),
 
   // ── Bookings ──────────────────────────────────────────────────
   createBooking: (data, token) =>

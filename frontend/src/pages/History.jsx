@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Header from '../components/Header';
 import BottomNav from '../components/BottomNav';
 import api from '../services/api';
 import { getToken } from '../services/storage';
+import { generateStickerBlob } from '../services/sticker';
 import './History.css';
 
 const TYPE_META = {
@@ -57,6 +58,45 @@ export default function History() {
   const [loading,  setLoading]  = useState(true);
   const [error,    setError]    = useState('');
   const [filter,   setFilter]   = useState('all'); // all | completed | cancelled
+
+  const handleInstagramShare = async (b, meta) => {
+    try {
+      const blob = await generateStickerBlob(b, meta);
+      const file = new File([blob], 'trip-ticket.png', { type: 'image/png' });
+      const text = `✨ Just completed a trip on @MoveOnGo! #MoveOnGo #Travel`;
+
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          files: [file],
+          title: 'My Trip Ticket! 🚀',
+          text: text,
+        });
+      } else {
+        throw new Error('File sharing not supported');
+      }
+    } catch (err) {
+      // Fallback for desktop/unsupported browsers
+      const text = `✨ Just completed a trip on MoveOn Go!\n📍 From: ${b.pickup}\n🏁 To: ${b.dropoff}`;
+      await navigator.clipboard.writeText(text);
+      alert('Trip summary copied! Open Instagram to share your milestone.');
+    }
+  };
+
+  const handleDownloadTicket = async (b, meta) => {
+    try {
+      const blob = await generateStickerBlob(b, meta);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `MoveOnGo-Ticket-${b._id || Date.now()}.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(url), 100);
+    } catch (err) {
+      alert('Failed to generate ticket.');
+    }
+  };
 
   useEffect(() => {
     (async () => {
@@ -205,10 +245,32 @@ export default function History() {
                       {formatDate(b.createdAt)}
                     </span>
                     {b.status === 'completed' && (
-                      <button className="hist2-card__rebook"
-                        onClick={() => navigate(`/book?type=${b.vehicleType}`)}>
-                        Rebook
-                      </button>
+                      <div style={{display:'flex', gap:8}}>
+                        <button 
+                          className="hist2-card__share"
+                          onClick={() => handleInstagramShare(b, meta)}
+                          style={{
+                            background: 'linear-gradient(45deg, #f09433 0%, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%)',
+                            color: 'white', border: 'none', borderRadius: '6px', padding: '4px 8px',
+                            display: 'flex', alignItems: 'center', gap: 4, fontSize: '11px', fontWeight: 600, cursor: 'pointer'
+                          }}>
+                          <InstagramIcon /> Story
+                        </button>
+                        <button 
+                          className="hist2-card__download"
+                          onClick={() => handleDownloadTicket(b, meta)}
+                          style={{
+                            background: 'var(--blue-50)',
+                            color: 'var(--blue-800)', border: '1px solid var(--blue-100)', borderRadius: '6px', padding: '4px 8px',
+                            display: 'flex', alignItems: 'center', gap: 4, fontSize: '11px', fontWeight: 600, cursor: 'pointer'
+                          }}>
+                          <DownloadIcon /> Ticket
+                        </button>
+                        <button className="hist2-card__rebook"
+                          onClick={() => navigate(`/book?type=${b.vehicleType}`)}>
+                          Rebook
+                        </button>
+                      </div>
                     )}
                   </div>
 
@@ -229,3 +291,6 @@ export default function History() {
     </div>
   );
 }
+
+function InstagramIcon() { return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"></line></svg>; }
+function DownloadIcon()  { return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>; }

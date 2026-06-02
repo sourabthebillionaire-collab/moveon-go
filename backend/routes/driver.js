@@ -32,15 +32,16 @@ async function generateVehicleId(vehicleType, vehicleNumber) {
 
 // POST /api/driver/register
 router.post('/register', asyncHandler(async (req, res) => {
-  const { name, phone, email, vehicleType, vehicleNumber, pin, address, licenseNumber, busName, routeFrom, routeTo, routeNumber, insuranceDoc } = req.body;
+  const { name, phone, email, vehicleType, vehicleNumber, pin, address, licenseNumber, busName, routeFrom, routeTo, routeNumber } = req.body;
 
   // Validate required fields
-  if (!name || !phone || !vehicleType || !vehicleNumber || !pin || !insuranceDoc) {
+  if (!name || !phone || !vehicleType || !vehicleNumber || !pin) {
     logger.warn('Driver register: missing required fields');
-    return res.status(400).json({ message: 'Name, phone, vehicle type, vehicle number, PIN and insurance document are required.' });
+    return res.status(400).json({ message: 'Name, phone, vehicle type, vehicle number, and PIN are required.' });
   }
 
-  if (String(pin).length !== 4 || !/^\d{4}$/.test(String(pin))) {
+  const pinStr = String(pin).trim();
+  if (pinStr.length !== 4 || !/^\d{4}$/.test(pinStr)) {
     logger.warn(`Driver register: invalid PIN format from ${phone}`);
     return res.status(400).json({ message: 'PIN must be exactly 4 digits.' });
   }
@@ -58,7 +59,7 @@ router.post('/register', asyncHandler(async (req, res) => {
   }
 
   // Hash PIN
-  const pinHash = await bcrypt.hash(String(pin), 10);
+  const pinHash = await bcrypt.hash(pinStr, 10);
 
   // Generate Vehicle ID
   const vehicleId = await generateVehicleId(vehicleType, vehicleNumber);
@@ -74,7 +75,6 @@ router.post('/register', asyncHandler(async (req, res) => {
     pinHash,
     address:       address?.trim() || '',
     licenseNumber: licenseNumber?.trim() || '',
-    insuranceDoc,
     busName:       vehicleType === 'bus' ? (busName?.trim() || '') : '',
     routeFrom:     vehicleType === 'bus' ? (routeFrom?.trim() || '') : '',
     routeTo:       vehicleType === 'bus' ? (routeTo?.trim() || '') : '',
@@ -85,6 +85,14 @@ router.post('/register', asyncHandler(async (req, res) => {
   });
 
   logger.info(`Driver registered: ${driver.vehicleId}`, { phone, vehicleType });
+
+  // ✅ REAL-TIME UI UPDATE: Notify admins about the new pending registration
+  if (global.io) {
+    global.io.to('admins').emit('admin:driverUpdated', { 
+      action: 'registered', 
+      driver: { id: driver._id, vehicleId: driver.vehicleId, name: driver.name, status: 'pending' } 
+    });
+  }
 
   res.status(201).json({
     message:   'Registration submitted successfully. You will be notified once approved by admin.',
@@ -135,6 +143,8 @@ router.post('/login', authLimiter, asyncHandler(async (req, res) => {
     logger.warn(`Driver login: incorrect PIN: ${vehicleId}`);
     return res.status(401).json({ message: 'Incorrect PIN. Please try again.' });
   }
+
+
 
   const token = signToken({ id: driver._id, type: 'driver' });
 

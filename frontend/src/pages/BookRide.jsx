@@ -9,6 +9,8 @@ import { getRoute, calcFare, fmtDist, fmtDuration } from '../services/routing';
 import api from '../services/api';
 import { connectSocket, getSocket, emitRiderLocation, joinBookingRoom, onBookingUpdate, onDriverLocationUpdate } from '../services/socket';
 import { addBooking, getToken, getActiveBooking, setActiveBooking, clearActiveBooking } from '../services/storage';
+import { useConfig } from '../context/ConfigContext';
+import { generateStickerBlob } from '../services/sticker';
 import './BookRide.css';
 
 // Subtle UI click sound helper
@@ -147,10 +149,16 @@ export default function BookRide() {
   const [driverLocation, setDriverLocation] = useState(null);
   const [socketDebug, setSocketDebug] = useState([]);
   const [countdown,     setCountdown]     = useState(TIMEOUT_SECONDS);
-  const [payLoading,    setPayLoading]    = useState(false);
   const [rideStatus,    setRideStatus]    = useState(null);
   const [showQr,       setShowQr]       = useState(false);
+  const [driverOffline, setDriverOffline] = useState(false);
   const [isBoarded,    setIsBoarded]    = useState(false);
+  const dynamicConfig = useConfig();
+  
+  const [rating,        setRating]        = useState(0);
+  const [feedback,      setFeedback]      = useState('');
+  const [feedbackSent,  setFeedbackSent]  = useState(false);
+  const [feedbackLoading, setFeedbackLoading] = useState(false);
 
   const driverIdRef            = useRef(null);
   const driverLocationRef      = useRef(null);
@@ -219,6 +227,7 @@ export default function BookRide() {
   };
 
   const handleBookingTermination = (finalStatus) => {
+    if (finalStatus === 'completed') setSocketDebug(prev => [...prev, { t: Date.now(), e: 'info', d: 'Trip data preserved for review' }]);
     stopPolling();
     if (roomUnsubRef.current) roomUnsubRef.current();
     roomUnsubRef.current = null;
@@ -233,6 +242,18 @@ export default function BookRide() {
     setDriverLocation(null);
     setRoute(null);
     setFare(null);
+  };
+
+  const handleFeedbackSubmit = async () => {
+    if (rating === 0) { showToast('Please select a star rating.'); return; }
+    setFeedbackLoading(true);
+    try {
+      // Note: bookingId is preserved in state during the 'completed' screen
+      await api.submitRideFeedback(bookingId, { rating, comment: feedback }, getToken());
+      setFeedbackSent(true);
+    } catch (err) {
+      showToast('Could not submit feedback. Please try again.');
+    } finally { setFeedbackLoading(false); }
   };
 
   // Main Socket & State Lifecycle Effect
@@ -285,13 +306,17 @@ export default function BookRide() {
       } else if (data.action === 'cancelled') {
         handleBookingTermination('cancelled');
       } else if (data.action === 'driver_offline') {
-        handleBookingTermination('driver_offline');
+        setDriverOffline(true);
+      } else if (data.action === 'driver_online') {
+        setDriverOffline(false);
+        if (data.location) setDriverLocation(data.location); // Update driver location immediately
       } else if (data.action === 'driver_arrived') {
         setSocketDebug(prev => [...prev, { t: Date.now(), e: 'info', d: 'Driver has arrived!' }]);
         playTada();
-        alert('Driver has arrived at the pickup location!');
+        showToast(data.message || 'Driver has arrived at the pickup location!');
       } else if (data.action === 'health_alert') {
         setSocketDebug(prev => [...prev, { t: Date.now(), e: 'health_check', d: data.message }]);
+        showToast(data.message);
       }
     });
 
@@ -421,26 +446,32 @@ export default function BookRide() {
       });
     } catch (err) {
       setBooking(null);
-      setPayLoading(false);
-      alert(err.message || 'Unable to connect. Check your connection.');
+      showToast(err.message || 'Unable to connect. Check your connection.');
     }
   };
 
   const handleBook = async () => {
-    if (!pickup || !dropoff) { alert('Please enter pickup and drop location'); return; }
+    if (!pickup || !dropoff) { showToast('Please enter pickup and drop location'); return; }
     const isValidCoord = (c) =>
       c && typeof c.lat === 'number' && typeof c.lng === 'number' &&
       !isNaN(c.lat) && !isNaN(c.lng);
-    if (!isValidCoord(pickupCoords))  { alert('Could not get pickup coordinates. Try searching the location again.'); return; }
-    if (!isValidCoord(dropoffCoords)) { alert('Could not get drop-off coordinates. Try searching the location again.'); return; }
+    if (!isValidCoord(pickupCoords))  { showToast('Could not get pickup coordinates. Try searching the location again.'); return; }
+    if (!isValidCoord(dropoffCoords)) { showToast('Could not get drop-off coordinates. Try searching the location again.'); return; }
     
     if (payment === 'Online') {
       // FREE ALTERNATIVE: UPI Intent (Deep Link)
-      // pa: your VPA/UPI ID, pn: Merchant Name
-      const upiUrl = `upi://pay?pa=YOUR_UPI_ID@bank&pn=MoveOnGo&am=${fare?.amount || 50}&cu=INR`;
+      const vpa = dynamicConfig?.upiId || import.meta.env.VITE_UPI_ID;
+      const merchant = dynamicConfig?.appName || import.meta.env.VITE_APP_NAME || 'MoveOnGo';
+
+      if (!vpa) {
+        showToast('Online payment is currently unavailable. Please use Cash.');
+        return;
+      }
+
+      const upiUrl = `upi://pay?pa=${vpa}&pn=${merchant}&am=${fare?.amount || 50}&cu=INR`;
+      
       window.location.href = upiUrl;
-      // Delay search slightly to allow the user to switch apps
-      setTimeout(() => startBooking(), 3000);
+      startBooking();
     } else {
       await startBooking();
     }
@@ -462,10 +493,41 @@ export default function BookRide() {
     } else {
       try {
         await navigator.clipboard.writeText(`${text} ${url}`);
-        alert('Trip details copied to clipboard!');
-      } catch (err) {
-        alert('Could not share trip details.');
+        showToast('Trip details copied to clipboard!');
+      } catch {
+        showToast('Could not share trip details.');
       }
+    }
+  };
+
+  const handleInstagramShare = async () => {
+    try {
+      const meta = TYPES.find(t => t.id === type) || TYPES[0];
+      const bookingData = {
+        pickup,
+        dropoff,
+        fareAmount: fare?.amount || 50,
+        distance: route?.distanceKm ? `${route.distanceKm} km` : '--',
+        duration: route?.durationMin ? `${route.durationMin} min` : '--'
+      };
+
+      const blob = await generateStickerBlob(bookingData, meta);
+      const file = new File([blob], 'my-trip.png', { type: 'image/png' });
+      const text = `✨ Heading to ${dropoff} with @MoveOnGo! #MoveOnGo`;
+
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          files: [file],
+          title: 'On my way! 🚕',
+          text: text,
+        });
+      } else {
+        const url = `${window.location.origin}/track/${bookingId}`;
+        await navigator.clipboard.writeText(`${text} ${url}`);
+        showToast('Story link copied! Open Instagram to share.');
+      }
+    } catch (err) {
+      showToast('Could not generate story sticker.');
     }
   };
 
@@ -475,7 +537,6 @@ export default function BookRide() {
       try { await api.cancelBooking(bookingId, getToken()); } catch {}
     }
     handleBookingTermination('cancelled'); // Use the consolidated termination handler
-    setPayLoading(false); // Ensure payment loading is reset
     setRideStatus(null);
     setIsBoarded(false);
   };
@@ -547,22 +608,6 @@ export default function BookRide() {
     </div>
   );
 
-  // ── Driver went offline mid-ride ────────────────────────────
-  if (booking === 'driver_offline') return (
-    <div className="app">
-      <Header title="Driver Unavailable" showBack onBack={() => setBooking(null)}/>
-      <div className="page" style={{padding:'40px 24px',textAlign:'center'}}>
-        <div style={{fontSize:56,marginBottom:16}}>📵</div>
-        <h2 style={{fontSize:18,fontWeight:700,marginBottom:8}}>Driver went offline</h2>
-        <p style={{color:'var(--gray-500)',fontSize:14,marginBottom:32}}>
-          Your driver lost connection. Please book again — we're sorry for the inconvenience.
-        </p>
-        <button className="btn btn--primary btn--full btn--lg" onClick={() => setBooking(null)}>Book Again</button>
-      </div>
-      <BottomNav/>
-    </div>
-  );
-
   if (booking === 'cancelled') return (
     <div className="app">
       <Header title="Ride Cancelled" showBack onBack={() => setBooking(null)}/>
@@ -580,14 +625,58 @@ export default function BookRide() {
 
   if (booking === 'completed') return (
     <div className="app">
-      <Header title="Trip Completed" showBack onBack={() => setBooking(null)}/>
+      <Header title="Trip Completed" showBack onBack={() => { setBooking(null); setRating(0); setFeedback(''); setFeedbackSent(false); }}/>
       <div className="page" style={{padding:'40px 24px',textAlign:'center'}}>
-        <div style={{fontSize:56,marginBottom:16}}>✅</div>
-        <h2 style={{fontSize:18,fontWeight:700,marginBottom:8}}>Your trip is complete</h2>
-        <p style={{color:'var(--gray-500)',fontSize:14,marginBottom:32}}>
-          Thank you for riding with us. Please rate the trip or book another ride.
-        </p>
-        <button className="btn btn--primary btn--full btn--lg" onClick={() => setBooking(null)}>Book again</button>
+        {feedbackSent ? (
+          <div className="slide-up">
+            <div style={{fontSize:64,marginBottom:16}}>🌟</div>
+            <h2 style={{fontSize:20,fontWeight:800,marginBottom:8,color:'var(--gray-900)'}}>Thank you!</h2>
+            <p style={{color:'var(--gray-500)',fontSize:15,marginBottom:32,lineHeight:1.6}}>
+              Your feedback helps us make MoveOn Go better for everyone.
+            </p>
+          </div>
+        ) : (
+          <div className="slide-up">
+            <div style={{fontSize:56,marginBottom:16}}>✅</div>
+            <h2 style={{fontSize:18,fontWeight:700,marginBottom:8}}>Your trip is complete</h2>
+            <p style={{color:'var(--gray-500)',fontSize:14,marginBottom:24}}>
+              How was your ride experience?
+            </p>
+            
+            <div style={{display:'flex', justifyContent:'center', gap:10, marginBottom:24}}>
+              {[1,2,3,4,5].map(star => (
+                <button 
+                  key={star} 
+                  onClick={() => { setRating(star); window.navigator?.vibrate?.(5); }}
+                  style={{
+                    background:'none', border:'none', fontSize:36, cursor:'pointer', 
+                    color: star <= rating ? '#FFCA28' : '#E2E8F0',
+                    transition: 'all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275)',
+                    transform: star === rating ? 'scale(1.2)' : 'scale(1)'
+                  }}
+                >
+                  ★
+                </button>
+              ))}
+            </div>
+
+            {rating > 0 && (
+              <div className="slide-up">
+                <textarea 
+                  className="input" 
+                  placeholder="Write a comment (optional)..." 
+                  value={feedback}
+                  onChange={e => setFeedback(e.target.value)}
+                  style={{marginBottom:16, minHeight:100, paddingTop:12, borderRadius: 16}}
+                />
+                <button className="btn btn--secondary btn--full btn--lg" style={{marginBottom:16}} onClick={handleFeedbackSubmit} disabled={feedbackLoading}>
+                  {feedbackLoading ? 'Submitting...' : 'Send Feedback'}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+        <button className="btn btn--primary btn--full btn--lg" onClick={() => { setBooking(null); setRating(0); setFeedback(''); setFeedbackSent(false); }}>Book again</button>
       </div>
       <BottomNav/>
     </div>
@@ -596,8 +685,24 @@ export default function BookRide() {
   // ── Driver found ─────────────────────────────────────────────
   if (booking === 'found' && driver) return (
     <div className="app">
-      <Header title="Ride Secured! ✅"/>
+      <Header 
+        title={driverOffline ? "Connection Lost..." : "Ride Secured! ✅"} 
+        showBack 
+        onBack={() => navigate('/')}
+      />
       <div className="page" style={{padding:'20px 16px'}}>
+        
+        {driverOffline && (
+          <div className="slide-up" style={{
+            background: 'var(--danger)', color: 'white', padding: '10px 14px', 
+            borderRadius: 12, marginBottom: 16, fontSize: 13, fontWeight: 600,
+            display: 'flex', alignItems: 'center', gap: 10, boxShadow: '0 4px 12px rgba(220, 38, 38, 0.2)'
+          }}>
+            <span className="spinner" style={{width:14, height:14, borderColor:'white', borderTopColor:'transparent'}} />
+            Driver lost connection. Waiting for them to return...
+          </div>
+        )}
+
         <div className="card br-driver-card slide-up">
           <div className="br-ride-live-tag">
              <span className="live-dot" /> LIVE TRACKING
@@ -652,7 +757,7 @@ export default function BookRide() {
             <button 
               className="btn btn--success btn--full" 
               style={{marginTop: 16, height: 48, fontWeight: 700, fontSize: 14}}
-              onClick={(e) => { e.target.disabled = true; e.target.innerText = '✅ Payment Confirmed'; alert('Cash payment acknowledged. Thank you for riding with MoveOn Go!'); }}
+              onClick={(e) => { e.target.disabled = true; e.target.innerText = '✅ Payment Confirmed'; showToast('Cash payment acknowledged. Thank you for riding with MoveOn Go!'); }}
             >
               💵 I have paid Cash
             </button>
@@ -688,11 +793,14 @@ export default function BookRide() {
           <button className="btn btn--secondary btn--lg" style={{flex:1,minWidth:'140px',display:'flex',alignItems:'center',justifyContent:'center',gap:8}} onClick={handleShareLocation}>
             <ShareIcon /> Share Trip
           </button>
+          <button className="btn btn--secondary btn--lg" style={{flex:1,minWidth:'140px',display:'flex',alignItems:'center',justifyContent:'center',gap:8, background:'linear-gradient(45deg, #f09433 0%, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%)', color:'white', border:'none', fontWeight:700}} onClick={handleInstagramShare}>
+            <InstagramIcon /> Story
+          </button>
           <button className="btn btn--secondary btn--lg" style={{flex:1,minWidth:'140px',display:'flex',alignItems:'center',justifyContent:'center',gap:8}} onClick={() => setShowQr(true)}>
             <QrIcon /> Show QR
           </button>
-          {/* FIX: Disable cancellation if trip has already started */}
-          {getActiveBooking()?.status !== 'started' && (
+          {/* Allow cancellation if trip hasn't started, OR if driver is offline (stalled trip) */}
+          {(rideStatus !== 'started' || driverOffline) && (
             <button className="btn btn--danger btn--lg" style={{flex:1,minWidth:'140px'}} onClick={handleCancel}>Cancel Ride</button>
           )}
         </div>
@@ -811,10 +919,8 @@ export default function BookRide() {
         <div style={{marginTop:16}}>
           <button className="btn btn--primary btn--full btn--lg"
             onClick={handleBook}
-            disabled={!pickup||!dropoff||routeLoading||payLoading}>
-            {payLoading
-              ? <><span className="spinner" style={{width:16,height:16,borderWidth:2}}/> Opening Payment…</>
-              : !dropoff          ? 'Enter Drop Location'
+            disabled={!pickup||!dropoff||routeLoading}>
+            {!dropoff          ? 'Enter Drop Location'
               : routeLoading      ? 'Calculating...'
               : payment === 'Cash'? `Book ${TYPES.find(v=>v.id===type)?.label} · ${fare?.display||'Get Fare'}`
               :                     `Pay Online · ${fare?.display||'Get Fare'}`
@@ -830,3 +936,4 @@ export default function BookRide() {
 
 function ShareIcon() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8M16 6l-4-4-4 4M12 2v13"/></svg>; }
 function QrIcon() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>; }
+function InstagramIcon() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"></line></svg>; }

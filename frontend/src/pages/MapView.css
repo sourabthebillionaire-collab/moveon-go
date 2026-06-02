@@ -117,3 +117,42 @@
   0% { transform: scale(1); opacity: 0.6; }
   100% { transform: scale(3.5); opacity: 0; }
 }
+
+/* Map Control Buttons */
+.map-recenter-btn {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+.map-recenter-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(0,0,0,0.25) !important;
+  filter: brightness(1.02);
+}
+
+.map-recenter-btn svg {
+  transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.map-recenter-btn:hover svg {
+  transform: scale(1.15);
+}
+
+.map-recenter-btn:active {
+  transform: scale(0.92);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15) !important;
+}
+
+.map-recenter-btn.active {
+  animation: map-pulse-blue 2s infinite;
+}
+
+@keyframes map-pulse-blue {
+  0% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.5); }
+  70% { box-shadow: 0 0 0 10px rgba(37, 99, 235, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0); }
+}
+
+@keyframes map-fade-in {
+  from { opacity: 0; transform: translateX(-4px); }
+  to { opacity: 1; transform: translateX(0); }
+}

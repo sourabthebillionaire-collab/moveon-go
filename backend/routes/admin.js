@@ -103,7 +103,12 @@ router.put('/drivers/:id/approve', adminAuth, asyncHandler(async (req, res) => {
     if (!driver) return res.status(404).json({ message: 'Driver not found.' });
 
     if (global.io) {
-      global.io.emit('driver:approved', { driverId: driver._id, vehicleId: driver.vehicleId });
+      // ✅ Targeted notification: only notify the specific vehicle room
+      const vRoom = `vehicle:${driver.vehicleId}`;
+      global.io.to(vRoom).emit('driver:approved', { driverId: driver._id, vehicleId: driver.vehicleId });
+      
+      // ✅ Cleanup: Force unapproved connections to leave the temporary vehicle room
+      global.io.in(vRoom).socketsLeave(vRoom);
     }
 
     res.json({ message: `Driver ${driver.name} approved. Vehicle ID: ${driver.vehicleId}`, driver });
@@ -122,28 +127,35 @@ router.put('/drivers/:id/reject', adminAuth, asyncHandler(async (req, res) => {
 
     // ✅ Kick driver off active session immediately
     if (global.io) {
+      const driverRoom = `driver:${req.params.id}`;
+      const vehicleRoom = `vehicle:${driver.vehicleId}`;
+
+      // Notify unapproved driver if they are still on the ID screen
+      global.io.to(vehicleRoom).emit('driver:kicked', { reason: reason || 'Registration rejected.' });
+      global.io.in(vehicleRoom).socketsLeave(vehicleRoom);
+
       // FIX: Notify rider if driver was on a trip
       if (global.io.driverToBooking) {
         const bookingId = global.io.driverToBooking.get(String(req.params.id));
         if (bookingId) {
             const room = `booking:${bookingId}`;
             global.io.to(room).emit(room, {
-              action: 'booking:statusUpdate', // Use a distinct event name
-              message: 'Your ride was cancelled due to a driver account issue.'
+              action: 'cancelled',
+              message: 'Your ride was cancelled due to a driver account issue.',
+              bookingId
             });
             global.io.in(room).socketsLeave(room);
             global.io.activeBookings.delete(bookingId);
             global.io.driverToBooking.delete(String(req.params.id));
             logger.info(`Admin rejected driver ${req.params.id} — aborted active booking ${bookingId}`);
-      }
-    }
+          }
+        }
 
-      global.io.to(`driver:${req.params.id}`).emit('driver:kicked', {
-        reason: reason || 'Your account has been rejected by admin.',
-      });
-      // FIX: Force socket to leave room
-      global.io.in(`driver:${req.params.id}`).socketsLeave(`driver:${req.params.id}`);
-    }
+        global.io.to(driverRoom).emit('driver:kicked', {
+          reason: reason || 'Your account has been rejected by admin.',
+        });
+        global.io.in(driverRoom).socketsLeave(driverRoom);
+      }
 
     res.json({ message: `Driver ${driver.name} rejected.`, driver });
 }));
@@ -163,22 +175,23 @@ router.delete('/drivers/:id', adminAuth, asyncHandler(async (req, res) => {
         if (bookingId) {
             const room = `booking:${bookingId}`;
             global.io.to(room).emit(room, {
-              action: 'booking:statusUpdate', // Use a distinct event name
-              message: 'Your driver is no longer available.'
+              action: 'cancelled',
+              message: 'Your driver is no longer available.',
+              bookingId
             });
             global.io.in(room).socketsLeave(room);
             global.io.activeBookings.delete(bookingId);
             global.io.driverToBooking.delete(String(req.params.id));
             logger.info(`Admin deleted driver ${req.params.id} — aborted active booking ${bookingId}`);
-      }
-    }
+          }
+        }
 
-      global.io.to(driverRoom).emit('driver:kicked', {
-        reason: 'Your account has been removed by admin.',
-      });
-      // FIX: Force socket to leave room to prevent memory bloat
-      global.io.in(driverRoom).socketsLeave(driverRoom);
-    }
+        global.io.to(driverRoom).emit('driver:kicked', {
+          reason: 'Your account has been removed by admin.',
+        });
+        // FIX: Force socket to leave room to prevent memory bloat
+        global.io.in(driverRoom).socketsLeave(driverRoom);
+      }
 
     res.json({ message: `Driver ${driver.name} deleted.` });
 }));

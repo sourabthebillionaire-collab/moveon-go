@@ -17,7 +17,7 @@ router.post('/:rideId/respond', protectDriver, asyncHandler(async (req, res) => 
         { _id: rideId, status: 'searching' },
         { status: 'accepted', driverId: req.driver._id, acceptedAt: new Date() }, // Fixed: acceptedAt
         { new: true }
-      );
+      ).populate('userId', 'name phone').lean(); // Ensure lean for direct object manipulation
 
       if (!booking) {
         return res.status(404).json({ message: 'Ride not available. Already taken or cancelled.' });
@@ -65,7 +65,7 @@ router.post('/:rideId/respond', protectDriver, asyncHandler(async (req, res) => 
       // Silent decline for rider — dispatch continues or searching remains active
     }
 
-    res.json({ message: `Ride ${action}ed.` });
+    res.json({ message: `Ride ${action}ed.`, booking: action === 'accept' ? booking : undefined });
 }));
 
 // PUT /api/rides/:rideId/start — driver starts ride after pickup
@@ -82,7 +82,7 @@ router.put('/:rideId/start', protectDriver, asyncHandler(async (req, res) => {
     { _id: rideId, driverId: req.driver._id, status: 'accepted' },
     { status: 'started' },
     { new: true }
-  );
+  ).populate('userId', 'name phone').lean();
 
   if (!booking) {
     return res.status(409).json({ message: `Ride cannot be started. Status: ${check.status}` });
@@ -91,17 +91,24 @@ router.put('/:rideId/start', protectDriver, asyncHandler(async (req, res) => {
   if (global.io) {
     const payload = {
       action: 'started', bookingId: String(rideId),
-      driverId: String(req.driver._id),
+      booking: booking, // Full update for rider
+      driverId: String(req.driver._id), // For room routing
       driver: {
-        name: req.driver.name, phone: req.driver.phone,
-        vehicleNumber: req.driver.vehicleNumber, rating: req.driver.rating || 4.5
-      }
+        driverId: String(req.driver._id), // For rider state update
+        name: req.driver.name, 
+        phone: req.driver.phone,
+        vehicleNumber: req.driver.vehicleNumber, 
+        rating: req.driver.rating || 4.5
+      },
+      otp: booking.startOTP
     };
     global.io.to(`booking:${rideId}`).emit(`booking:${rideId}`, payload);
+    // Cleanup: arrival notification is no longer needed once trip starts
+    global.io.arrivedNotified?.delete(String(rideId));
   }
 
     // If a driver declines, the booking status remains 'searching' for other drivers.
-  res.json({ message: 'Ride started.' });
+  res.json({ message: 'Ride started.', booking });
 }));
 
 // PUT /api/rides/:rideId/complete — driver completes the ride
@@ -111,13 +118,20 @@ router.put('/:rideId/complete', protectDriver, asyncHandler(async (req, res) => 
     { _id: rideId, driverId: req.driver._id, status: 'started' },
     { status: 'completed', completedAt: new Date() },
     { new: true }
-  );
+  ).populate('userId', 'name phone').lean();
 
   if (!booking) {
     return res.status(404).json({ message: 'Ride cannot be completed. It may not be started yet.' });
   }
 
   await Driver.updateOne({ _id: req.driver._id }, { $inc: { totalTrips: 1 }, status: 'active' });
+
+  // ✅ SYNC MEMORY MAP: Mark driver as active immediately
+  const currentPos = global.io?.activeVehiclePositions?.get(String(req.driver._id));
+  if (currentPos) {
+    currentPos.status = 'active';
+    global.io.emit('vehicles:update', currentPos);
+  }
 
   if (global.io) {
     const payload = {
@@ -126,13 +140,14 @@ router.put('/:rideId/complete', protectDriver, asyncHandler(async (req, res) => 
       fareAmount: booking.fareAmount,
     };
     global.io.to(`booking:${rideId}`).emit(`booking:${rideId}`, payload);
+    global.io.in(`booking:${rideId}`).socketsLeave(`booking:${rideId}`);
     global.io.activeBookings?.delete(String(rideId));
-    global.io.arrivedNotified?.delete(String(rideId));
-    // FIX: Clear arrivedNotified for this booking
+    const arrived = global.io.arrivedNotified;
+    if (arrived instanceof Set) arrived.delete(String(rideId));
     global.io.driverToBooking?.delete(String(req.driver._id));
   }
 
-  res.json({ message: 'Ride completed.', fareAmount: booking.fareAmount });
+  res.json({ message: 'Ride completed.', booking, fareAmount: booking.fareAmount });
 }));
 
 // PUT /api/rides/:rideId/cancel — driver cancels active ride
@@ -142,7 +157,7 @@ router.put('/:rideId/cancel', protectDriver, asyncHandler(async (req, res) => {
     { _id: rideId, driverId: req.driver._id, status: { $in: ['accepted', 'started'] } },
     { status: 'cancelled' },
     { new: true }
-  );
+  ).populate('userId', 'name phone').lean();
 
   if (!booking) {
     return res.status(404).json({ message: 'Ride cannot be cancelled. It may not be assigned to you.' });
@@ -153,6 +168,7 @@ router.put('/:rideId/cancel', protectDriver, asyncHandler(async (req, res) => {
   if (global.io) {
     const payload = { action: 'cancelled', bookingId: String(rideId), driverId: String(req.driver._id) };
     global.io.to(`booking:${rideId}`).emit(`booking:${rideId}`, payload);
+    global.io.in(`booking:${rideId}`).socketsLeave(`booking:${rideId}`);
     global.io.activeBookings?.delete(String(rideId));
     // FIX: Clear arrivedNotified for this booking
     global.io.arrivedNotified?.delete(String(rideId));
@@ -162,7 +178,7 @@ router.put('/:rideId/cancel', protectDriver, asyncHandler(async (req, res) => {
     logger.info(`Driver cancelled — notified rider room booking:${rideId}`, { bookingId: rideId });
   }
 
-  res.json({ message: 'Ride cancelled.' });
+  res.json({ message: 'Ride cancelled.', booking });
 }));
 
 // PUT /api/rides/:rideId/boarded — rider confirms boarding
@@ -181,6 +197,30 @@ router.put('/:rideId/boarded', protect, asyncHandler(async (req, res) => {
     }
   }
   res.json({ message: 'Boarding notification sent.' });
+}));
+
+// POST /api/rides/:rideId/feedback — rider submits rating
+router.post('/:rideId/feedback', protect, asyncHandler(async (req, res) => {
+  const { rating, comment } = req.body;
+  const rideId = req.params.rideId;
+
+  const booking = await Booking.findById(rideId);
+  if (!booking || String(booking.userId) !== String(req.user._id)) {
+    return res.status(404).json({ message: 'Trip not found.' });
+  }
+
+  // Update driver rating (weighted average)
+  if (booking.driverId && rating) {
+    const driver = await Driver.findById(booking.driverId);
+    if (driver) {
+      const currentRating = driver.rating || 5.0;
+      const totalTrips = driver.totalTrips || 1;
+      const newRating = ((currentRating * totalTrips) + rating) / (totalTrips + 1);
+      await Driver.updateOne({ _id: driver._id }, { rating: Number(newRating.toFixed(1)) });
+    }
+  }
+
+  res.json({ message: 'Feedback submitted successfully.' });
 }));
 
 module.exports = router;

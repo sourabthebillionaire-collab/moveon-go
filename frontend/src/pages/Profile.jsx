@@ -87,12 +87,20 @@ export default function Profile() {
 
   const handleLogout = () => { logout(); navigate('/login'); };
 
-  const initials = (user?.name ? user.name.split(' ') : [user?.phone?.slice(-2) || 'U']) // BUG 17: Safe initials
-    .filter(w => w)
-    .map(w => w[0])
-    .slice(0, 2)
-    .join('')
-    .toUpperCase();
+  const initials = (() => {
+    if (user?.name) {
+      return user.name.split(' ')
+        .filter(w => w)
+        .map(w => w[0])
+        .slice(0, 2)
+        .join('')
+        .toUpperCase();
+    }
+    if (user?.phone && typeof user.phone === 'string' && user.phone.length >= 2) {
+      return user.phone.slice(-2).toUpperCase();
+    }
+    return 'U';
+  })();
 
   const STATS = [
     { val: tripCount, label: 'Trips',  icon: '🛺' },

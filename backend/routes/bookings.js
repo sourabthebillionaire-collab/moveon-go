@@ -108,7 +108,8 @@ router.get('/driver-active', protectDriver, asyncHandler(async (req, res) => {
   const booking = await Booking.findOne({
     driverId: req.driver._id,
     status:   { $in: ['accepted', 'started'] },
-  }).select('_id status pickup dropoff fare fareAmount distance duration pickupLat pickupLng dropoffLat dropoffLng vehicleType payment').lean();
+  }).populate('userId', 'name phone')
+    .select('_id userId status pickup dropoff fare fareAmount distance duration pickupLat pickupLng dropoffLat dropoffLng vehicleType payment').lean();
 
   logger.info(`Driver active booking query`, { driverId: req.driver._id, found: !!booking });
   res.json({ booking: booking || null });
@@ -140,16 +141,28 @@ router.delete('/:id', protect, asyncHandler(async (req, res) => {
   }
 
   if (global.io) {
+    const bId = String(req.params.id);
+    const dId = booking.driverId ? String(booking.driverId) : null;
+    
+    // Clean up all socket state for this booking
     if (global.io.activeBookings) {
-      global.io.activeBookings.delete(String(req.params.id));
+      global.io.activeBookings.delete(bId);
     }
-    global.io.arrivedNotified?.delete(String(req.params.id));
-    // FIX: Clear arrivedNotified for this booking
-    if (booking.driverId && global.io.driverToBooking) {
-      global.io.driverToBooking.delete(String(booking.driverId));
+    if (global.io.arrivedNotified) {
+      global.io.arrivedNotified.delete(bId);
     }
-    global.io.to(`booking:${req.params.id}`).emit(`booking:${req.params.id}`, { action: 'cancelled' });
-
+    if (dId && global.io.driverToBooking) {
+      global.io.driverToBooking.delete(dId);
+    }
+    
+    // Notify socket room about cancellation
+    global.io.to(`booking:${bId}`).emit(`booking:${bId}`, {
+      action: 'cancelled',
+      bookingId: bId,
+    });
+    
+    // Remove all users from the booking room
+    global.io.in(`booking:${bId}`).socketsLeave(`booking:${bId}`);
     if (booking.driverId) {
       // FIX: Ensure driver is set back to 'active' status so they can receive new rides.
       await Driver.updateOne({ _id: booking.driverId }, { status: 'active' });

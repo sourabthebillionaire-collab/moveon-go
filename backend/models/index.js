@@ -7,6 +7,7 @@ const userSchema = new mongoose.Schema({
   role:      { type: String, enum: ['passenger', 'admin'], default: 'passenger' },
   isActive:  { type: Boolean, default: true },
   lastLogin: { type: Date, default: Date.now },
+  lastSeen:  { type: Date, default: Date.now },
 }, { timestamps: true });
 
 const driverSchema = new mongoose.Schema({
@@ -39,6 +40,7 @@ const driverSchema = new mongoose.Schema({
   },
   onDuty: { type: Boolean, default: false },
   status: { type: String, enum: ['active', 'busy', 'offline', 'SOS'], default: 'offline' },
+  fcmToken: { type: String, trim: true },
 }, { timestamps: true });
 
 const bookingSchema = new mongoose.Schema({

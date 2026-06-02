@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import api from '../services/api';
+import { connectSocket } from '../services/socket';
 import './Admin.css';
 
 function AdminLogin({ onLogin }) {
@@ -43,6 +44,17 @@ function AdminLogin({ onLogin }) {
   );
 }
 
+function formatLastSeen(dateStr) {
+  if (!dateStr) return '—';
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'Just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return new Date(dateStr).toLocaleDateString('en-IN');
+}
+
 function Dashboard({ token, onLogout }) {
   const [tab,      setTab]      = useState('overview');
   const [stats,    setStats]    = useState(null);
@@ -80,6 +92,21 @@ function Dashboard({ token, onLogout }) {
       if (err.message.toLowerCase().includes('token') || err.message.toLowerCase().includes('authenticated')) onLogout();
     } finally { setLoading(false); }
   };
+
+  // ✅ REAL-TIME UPDATES: Register admin for socket events
+  useEffect(() => {
+    if (!token) return;
+    const socket = connectSocket();
+    socket.emit('admin:register', { token });
+
+    const handleDriverUpdate = (data) => {
+      showMsg(`🔔 Real-time: New driver ${data.action}!`);
+      load(tab); // Refresh current view automatically
+    };
+
+    socket.on('admin:driverUpdated', handleDriverUpdate);
+    return () => socket.off('admin:driverUpdated', handleDriverUpdate);
+  }, [token, tab]);
 
   useEffect(() => { load(tab); }, [token, tab]);
 
@@ -290,12 +317,16 @@ function Dashboard({ token, onLogout }) {
                   <span>Phone</span>
                   <span>Name</span>
                   <span>Joined</span>
+                  <span>Last Active</span>
                 </div>
                 {users.map(u => (
                   <div key={u._id} className="ad-table-row">
                     <span>{u.phone}</span>
                     <span>{u.name || '—'}</span>
                     <span>{new Date(u.createdAt).toLocaleDateString('en-IN')}</span>
+                    <span className={Date.now() - new Date(u.lastSeen).getTime() < 300000 ? 'adc-online' : ''}>
+                      {formatLastSeen(u.lastSeen)}
+                    </span>
                   </div>
                 ))}
               </div>

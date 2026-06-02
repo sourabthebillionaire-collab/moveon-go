@@ -38,12 +38,14 @@ const driverRegisterSchema = joi.object({
     'string.length': 'PIN must be 4 digits',
   }),
   licenseNumber: joi.string().min(8).max(20).required(), // Kept as required
+  fcmToken: joi.string().allow('').optional(),
   // aadharNumber is not stored in the Driver model, so removed from schema
 });
 
 const driverLoginSchema = joi.object({
   vehicleId: joi.string().min(5).required(),
   pin: joi.string().length(4).required(),
+  fcmToken: joi.string().allow('').optional(),
 });
 
 const locationUpdateSchema = joi.object({
@@ -59,7 +61,7 @@ const dutySchema = joi.object({
 
 // ── Booking Schemas ──────────────────────────────────────────
 const bookingCreateSchema = joi.object({
-  type: joi.string().valid('auto', 'cab', 'bike').required(),
+  type: joi.string().valid('auto', 'cab', 'bike', 'bus').required(), // Added 'bus'
   pickup: joi.string().required(),
   pickupCoords: joi.object({
     lat: joi.number().required(),
@@ -72,7 +74,7 @@ const bookingCreateSchema = joi.object({
   }).required(),
   fare: joi.string().optional(),
   fareAmount: joi.number().min(0).required(), // Ensure fareAmount is non-negative
-  payment: joi.string().valid('cash', 'card', 'wallet').required(),
+  payment: joi.string().valid('Cash', 'Online').required(),
   distance: joi.string().optional(),
   duration: joi.string().optional(),
 });
@@ -87,7 +89,7 @@ const fareEstimateSchema = joi.object({
     lat: joi.number().required(),
     lng: joi.number().required(),
   }).required(),
-  vehicleType: joi.string().valid('auto', 'cab', 'bike').required(),
+  vehicleType: joi.string().valid('auto', 'cab', 'bike', 'bus').required(),
 });
 
 // ── Rides Schemas ────────────────────────────────────────────
@@ -99,7 +101,7 @@ const rideRespondSchema = joi.object({
 const nearbyVehiclesSchema = joi.object({
   lat: joi.number().required(),
   lng: joi.number().required(),
-  type: joi.string().valid('all', 'auto', 'cab', 'bike').optional().default('all'),
+  type: joi.string().valid('all', 'auto', 'cab', 'bike', 'bus').optional().default('all'),
 });
 
 module.exports = {

@@ -217,9 +217,12 @@ export default function Driver() {
   const [gpsError,   setGpsError]  = useState(false);
   const [gpsStale,   setGpsStale]  = useState(false);
   const [socketConnected, setSocketConnected] = useState(false);
+  const [isReconnecting, setIsReconnecting] = useState(false);
   const [maxAttemptsReached, setMaxAttemptsReached] = useState(false);
   const unwatchRef   = useRef(null);
   const pingRef      = useRef(null);
+  const wakeLockRef  = useRef(null);
+  const gpsStaleAlertRef = useRef(false); // Track if we've already alerted for current staleness
   const gpsPosRef    = useRef(null); // keep GPS pos accessible in interval closure
   const lastEmitRef  = useRef(0);    // FIX: Throttle redundant emissions
   const lastMovementRef  = useRef(Date.now());
@@ -233,10 +236,41 @@ export default function Driver() {
   const activeRideRef = useRef(null);
   const passengersRef = useRef(0);
   const driverRef     = useRef(null);
+  const onDutyRef     = useRef(onDuty);
 
   useEffect(() => { activeRideRef.current = activeRide; }, [activeRide]);
   useEffect(() => { passengersRef.current = passengers; }, [passengers]);
   useEffect(() => { driverRef.current     = driver;     }, [driver]);
+  useEffect(() => { onDutyRef.current     = onDuty;     }, [onDuty]);
+
+  // ── Wake Lock API: Prevent background suspension ───────────
+  const requestWakeLock = async () => {
+    if ('wakeLock' in navigator && onDutyRef.current) {
+      try {
+        wakeLockRef.current = await navigator.wakeLock.request('screen');
+      } catch (err) {
+        console.warn(`[WakeLock] Could not acquire lock: ${err.message}`);
+      }
+    }
+  };
+
+  const releaseWakeLock = () => {
+    if (wakeLockRef.current) {
+      wakeLockRef.current.release().then(() => {
+        wakeLockRef.current = null;
+      });
+    }
+  };
+
+  useEffect(() => {
+    const handleVisibilityChange = async () => {
+      if (wakeLockRef.current !== null && document.visibilityState === 'visible') {
+        await requestWakeLock();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, []);
 
   const t = T[lang];
 
@@ -244,51 +278,15 @@ export default function Driver() {
   useEffect(() => {
     const token = getDriverToken();
     const saved = getDriver();
+    let isMounted = true;
+
+    // Ensure socket is connected immediately to listen for real-time approval
+    const socket = connectSocket();
+
     if (!token || !saved) return;
 
     (async () => {
       try {
-        const socket = connectSocket();
-        const driverId = saved.id || saved._id;
-        const vehicleType = saved.vehicleType;
-
-        // Ensure clean state before adding listeners
-        socket.off('driver:kicked');
-        socket.off('connect');
-
-        // FIX #11: Re-register on every reconnect so driver stays in their
-        // personal room through socket disconnects. Previously registered once
-        // on mount — after any reconnect the driver missed kicked/offline events.
-        const handleReconnect = () => {
-          const token = getDriverToken();
-          socket.emit('driver:register', { driverId, vehicleType, token });
-          setSocketConnected(true);
-          setSocketDebug(d => [...d.slice(-9), { t: Date.now(), e: 'socket:register_attempt', d: { driverId, vehicleType } }]);
-        };
-
-        if (socket.connected) {
-          setSocketConnected(true);
-          handleReconnect();
-        }
-
-        socket.on('connect', handleReconnect);
-        socket.on('disconnect', (reason) => {
-          setSocketConnected(false);
-          setSocketDebug(d => [...d.slice(-9), { t: Date.now(), e: 'socket:disconnect', d: { reason } }]);
-        });
-
-        socket.on('driver:kicked', ({ reason }) => {
-          setSocketDebug(d => [...d.slice(-9), { t: Date.now(), e: 'driver:kicked', d: { reason } }]);
-          unwatchRef.current?.();
-          clearInterval(pingRef.current);
-          disconnectSocket();
-          clearDriverSession();
-          setDriver(null);
-          setOnDuty(false);
-          setStep('id');
-          setKickedMsg(reason || 'Your account has been removed by admin.');
-        });
-
         const profile = await api.getDriverProfile(token);
         if (profile?.driver) {
           setDriver(profile.driver);
@@ -321,12 +319,16 @@ export default function Driver() {
                 dropoffLat: liveBooking.dropoffLat,
                 dropoffLng: liveBooking.dropoffLng,
                 payment:    liveBooking.payment,
+                passengerName:  liveBooking.userId?.name || 'Passenger',
+                passengerPhone: liveBooking.userId?.phone || ''
               };
               setActiveRide(verifiedRide);
               setActiveDriverRide(verifiedRide);
+              joinBookingRoom(verifiedRide.id);
               setOnDuty(true);
               setTripActive(liveBooking.status === 'started');
               setPassengers(liveBooking.status === 'started' ? 1 : 0);
+              startTracking();
             } else {
               clearActiveDriverRide(); // stale — gone from DB, clear local storage
               setActiveRide(null);
@@ -342,28 +344,121 @@ export default function Driver() {
         }
 
         // ✅ CRITICAL FIX: Ensure tracking starts immediately on session restore if On Duty
-        if (profile?.driver?.onDuty || storedRide) {
-          startTracking();
+        if (isMounted && (profile?.driver?.onDuty || storedRide)) {
+          startTracking(profile.driver || saved);
+          requestWakeLock();
         }
 
-        setStep('panel');
+        if (isMounted) {
+          setStep('panel');
+        }
       } catch (err) {
+        if (!isMounted) return;
         if (err.status === 401 || err.status === 404) {
           clearDriverSession();
           setDriver(null);
           setKickedMsg('Your account no longer exists. Contact admin.');
+        } else if (err.status === 403) {
+          setStep('id');
+          setError(err.data?.message || 'Your registration is pending admin approval.');
+          socket.emit('driver:joinApprovalRoom', { vehicleId: saved.vehicleId });
         } else {
-          setStep('panel');
+          // If API fails, but session is valid, still go to panel
+          setStep('panel'); 
         }
       }
     })();
 
     return () => {
-      const socket = getSocket();
-      socket?.off('driver:kicked');
-      socket?.off('connect');
+      isMounted = false;
     };
   }, []);
+
+  // ── Unified Socket Event Lifecycle ──────────────────────────
+  useEffect(() => {
+    const token = getDriverToken();
+    if (!token || !driver) return;
+
+    const socket = connectSocket();
+    const dId = driver.id || driver._id;
+
+    const handleConnected = () => {
+      setSocketConnected(true);
+      setIsReconnecting(false);
+      const type = String(driver.vehicleType).trim().toLowerCase();
+      socket.emit('driver:register', { driverId: dId, vehicleType: type, token });
+      setSocketDebug(prev => [...prev.slice(-9), { t: Date.now(), e: 'socket:connected/registered', d: { dId } }]);
+
+      // ✅ RESTORE PRESENCE: Immediately re-broadcast last known location on (re)connect
+      const savedPos = gpsPosRef.current;
+      if (savedPos && onDutyRef.current) {
+        const d = driverRef.current;
+        emitLocation({
+          driverId:      d?.id || d?._id,
+          vehicleId:     d?.vehicleId,
+          type:          d?.vehicleType,
+          vehicleNumber: d?.vehicleNumber,
+          busName:       d?.busName     || '',
+          routeFrom:     d?.routeFrom   || '',
+          routeTo:       d?.routeTo     || '',
+          routeNumber:   d?.routeNumber || '',
+          lat: savedPos.lat,
+          lng: savedPos.lng,
+          bearing: savedPos.bearing || 0,
+          speed: Math.round((savedPos.speed || 0) * 3.6),
+          status: activeRideRef.current ? 'busy' : 'active',
+          passengers: passengersRef.current,
+        });
+      }
+    };
+
+    const handleDisconnected = (reason) => {
+      setSocketConnected(false);
+      setIsReconnecting(false);
+      setSocketDebug(prev => [...prev.slice(-9), { t: Date.now(), e: 'socket:disconnected', d: { reason } }]);
+    };
+
+    const handleReconnectAttempt = (attempt) => {
+      setSocketConnected(false);
+      setIsReconnecting(true);
+      setSocketDebug(prev => [...prev.slice(-9), { t: Date.now(), e: 'socket:reconnect_attempt', d: { attempt } }]);
+    };
+
+    const handleReconnectFailed = () => {
+      setIsReconnecting(false);
+      setToast('Unable to connect to server. Checking internet connection...');
+    };
+
+    const handleKicked = ({ reason }) => {
+      setSocketDebug(d => [...d.slice(-9), { t: Date.now(), e: 'driver:kicked', d: { reason } }]);
+      unwatchRef.current?.();
+      clearInterval(pingRef.current);
+      disconnectSocket();
+      clearDriverSession();
+      setDriver(null);
+      setOnDuty(false);
+      setStep('id');
+      setKickedMsg(reason || 'Your account has been removed by admin.');
+    };
+
+    // Sync internal state
+    setSocketConnected(socket.connected);
+    if (socket.connected) handleConnected();
+
+    socket.on('connect',           handleConnected);
+    socket.on('disconnect',        handleDisconnected);
+    socket.on('reconnect_attempt', handleReconnectAttempt);
+    socket.on('reconnect_failed',  handleReconnectFailed);
+    socket.on('driver:kicked',     handleKicked);
+
+    return () => {
+      socket.off('connect',           handleConnected);
+      socket.off('disconnect',        handleDisconnected);
+      socket.off('reconnect_attempt', handleReconnectAttempt);
+      socket.off('reconnect_failed',  handleReconnectFailed);
+      socket.off('driver:kicked',     handleKicked);
+    };
+  }, [driver]); // Re-bind listeners if driver object changes
 
   // ✅ BUG FIX: Move nested useEffect to top level
   // UX Improvement: Listen for real-time approval if waiting on ID screen
@@ -390,6 +485,10 @@ export default function Driver() {
       setStep('pin');
       setTimeout(() => pinInputRef.current?.focus(), 200);
     } catch (err) {
+      if (err.status === 403) {
+        const socket = getSocket();
+        socket?.emit('driver:joinApprovalRoom', { vehicleId: vehicleId.trim().toUpperCase() });
+      }
       setError(err.status === 404 ? t.errInvalidId : err.status === 403 ? (err.data?.message || err.message || 'Your registration is pending admin approval.') : t.errServer);
     } finally { setBusy(false); }
   };
@@ -402,58 +501,37 @@ export default function Driver() {
       const { driver: d, token } = await api.driverLogin(vehicleId.trim().toUpperCase(), pin);
       setDriverSession(d, token);
       setDriver(d);
-
-      const socket = connectSocket();
-      const driverId = d.id || d._id;
-
-      const handleReconnect = () => {
-        const savedDriver = getDriver();
-        const type = savedDriver?.vehicleType || d.vehicleType;
-        socket.emit('driver:register', { driverId, vehicleType: type, token });
-        setSocketConnected(true);
-        setSocketDebug(prev => [...prev.slice(-9), { t: Date.now(), e: 'socket:register_attempt', d: { type } }]);
-      };
-
-      if (socket.connected) {
-        setSocketConnected(true);
-        handleReconnect(); // Call immediately if already connected
-      }
-
-      socket.off('driver:kicked');
-      // FIX #11 (login path): Re-register on every reconnect
-      socket.on('connect', handleReconnect);
-      socket.on('disconnect', () => setSocketConnected(false));
-
-      socket.on('driver:kicked', ({ reason }) => {
-        unwatchRef.current?.();
-        clearInterval(pingRef.current);
-        disconnectSocket();
-        clearDriverSession();
-        setDriver(null);
-        setOnDuty(false);
-        setStep('id');
-        setKickedMsg(reason || 'Your account has been removed by admin.');
-      });
+      connectSocket(); // unified Effect picks up the driver change
 
       setStep('panel');
       setPin('');
     } catch (err) {
       setError(err.status === 401 ? t.errWrongPin : t.errServer);
-      setPin('');
+      setPin(''); // Clear PIN on error
     } finally { setBusy(false); }
   };
-
-  const startTracking = () => {
-    const socket = connectSocket();
-    const d = driverRef.current;
+  const startTracking = (driverData) => {
+    const socket = getSocket();
+    const d = driverData || driverRef.current;
+    if (!d) return;
     const driverId = d?.id || d?._id;
     const vehicleType = d?.vehicleType;
     const token = getDriverToken();
 
-    if (socket.connected) {
+    // ✅ PERSISTENCE: Seed position from storage if empty (handles app refresh/restart)
+    const stored = localStorage.getItem(`last_pos_${driverId}`);
+    if (stored && !gpsPosRef.current) {
+      try {
+        const p = JSON.parse(stored);
+        gpsPosRef.current = p;
+        setGpsPos(p);
+      } catch {}
+    }
+
+    if (socket?.connected) {
       socket.emit('driver:register', { driverId, vehicleType, token });
     } else {
-      socket.once('connect', () => socket.emit('driver:register', { driverId, vehicleType, token }));
+      socket?.once('connect', () => socket.emit('driver:register', { driverId, vehicleType, token }));
     }
 
     const basePayload = {
@@ -480,6 +558,10 @@ export default function Driver() {
       setGpsStale(false);
       gpsPosRef.current = pos;
       lastGpsUpdateRef.current = Date.now();
+
+      // ✅ PERSISTENCE: Keep storage updated for session recovery
+      localStorage.setItem(`last_pos_${driverId}`, JSON.stringify(pos));
+
       reconnectAttemptsRef.current = 0; // ✅ Reset attempts on successful signal
       setSpeed(Math.round((pos.speed || 0) * 3.6));
       
@@ -528,8 +610,19 @@ export default function Driver() {
       const now = Date.now();
       if (now - lastGpsUpdateRef.current > 60000) {
         setGpsStale(true);
+        
+        // Audible and Haptic Alert for background/distracted drivers
+        if (!gpsStaleAlertRef.current) {
+          gpsStaleAlertRef.current = true;
+          const alertMsg = lang === 'hi' ? 'जी पी एस सिग्नल खो गया है। कृपया ऐप खोलें।' : 
+                         lang === 'or' ? 'ଜିପିଏସ ସିଗନାଲ କଟିଯାଇଛି | ଦୟାକରି ଆପ୍ ଖୋଲନ୍ତୁ |' : 
+                         'GPS signal lost. Please keep the app in foreground.';
+          speak(alertMsg, lang);
+          window.navigator?.vibrate?.([500, 200, 500]); // Long distinct pulses
+        }
       } else {
         setGpsStale(false);
+        gpsStaleAlertRef.current = false;
       }
 
       // ✅ AUTO-RECONNECT: Restart tracking if GPS is stale for 3 minutes (180s)
@@ -590,6 +683,7 @@ export default function Driver() {
     speak(t.gpsActive, lang);
     reconnectAttemptsRef.current = 0; // Reset on manual duty start
     startTracking();
+    requestWakeLock();
   };
 
   const handleRetryGps = () => {
@@ -617,6 +711,7 @@ export default function Driver() {
     setMaxAttemptsReached(false);
     clearActiveDriverRide();
     lastEmitRef.current = 0;
+    releaseWakeLock();
     try { await api.setDriverDuty(false, getDriverToken()); } catch {}
     disconnectSocket();
   };
@@ -689,7 +784,7 @@ export default function Driver() {
         'Passenger cancelled the ride.',
         lang,
       );
-      alert('Passenger cancelled the booking.');
+      setToast('Passenger cancelled the booking.');
     };
 
     // ── BUG FIX C ───────────────────────────────────────────────
@@ -761,11 +856,19 @@ export default function Driver() {
     if (!rideReq || busy) return; 
     setBusy(true); // Prevent double-taps
     try {
-      await api.respondToRide(rideReq.id, 'accept', getDriverToken());
+      const res = await api.respondToRide(rideReq.id, 'accept', getDriverToken());
+      const b = res.booking;
       // ✅ Driver accepted the booking, but pickup hasn't happened yet.
-      const acceptedRide = { ...rideReq, id: rideReq.id, status: 'accepted' };
+      const acceptedRide = { 
+        ...rideReq, 
+        id: rideReq.id, 
+        status: 'accepted',
+        passengerName: b?.userId?.name,
+        passengerPhone: b?.userId?.phone 
+      };
       setActiveRide(acceptedRide);
       setActiveDriverRide(acceptedRide);
+      joinBookingRoom(rideReq.id);
       setRideReq(null);
       setUserLocation(null);
       setTripActive(false);
@@ -776,9 +879,8 @@ export default function Driver() {
         lang,
       );
     } catch (err) {
-      console.error('[Driver] Failed to accept ride:', err);
+      setToast('Failed to accept ride. It may have been taken or cancelled.');
       setRideReq(null); // FIX: Clear stale request if it's no longer valid
-      alert('Failed to accept ride. It may have been taken or cancelled.');
     } finally {
       setBusy(false); // FIX: Must reset busy state to allow future actions
     }
@@ -793,22 +895,26 @@ export default function Driver() {
       await api.respondToRide(rideReq.id, 'decline', getDriverToken());
       // ✅ DO NOT call emitRideResponse here — backend handles socket emit
       setRideReq(null);
-    } catch (err) {
-      console.error('[Driver] Failed to decline ride:', err);
+    } catch {
+      setToast('Failed to decline ride. Please try again.');
       setRideReq(null); // dismiss UI even on error
     } finally { setBusy(false); }
   };
 
   const startRide = async () => {
     if (!activeRide || busy) return;
-    
     setBusy(true);
     try {
-      // OTP is now passed as a dummy value "0000" because the backend no longer requires it
-      await api.startRide(activeRide.id, "0000", getDriverToken());
-      
-      // FIX: Only update local state AFTER successful backend verification
-      const startedRide = { ...activeRide, status: 'started' };
+      const res = await api.startRide(activeRide.id, getDriverToken());
+      const b = res.booking;
+
+      const startedRide = { 
+        ...activeRide, 
+        status: 'started',
+        passengerName: b?.userId?.name || activeRide.passengerName,
+        passengerPhone: b?.userId?.phone || activeRide.passengerPhone
+      };
+
       setTripActive(true);
       lastMovementRef.current = Date.now(); // Reset movement timer when trip starts
       lastGpsUpdateRef.current = Date.now(); // Reset GPS timer
@@ -823,7 +929,7 @@ export default function Driver() {
         lang,
       );
     } catch (err) {
-      console.error('[Driver] Failed to start ride:', err);
+      setToast('Failed to start ride. Please check your connection and try again.');
       // FIX #14: Handle stale ride (404/409) by clearing local state.
       // "Failed to start the ride" was caused by a stale localStorage ride
       // that no longer exists in DB. Now we clear it and show a clear message
@@ -834,13 +940,13 @@ export default function Driver() {
         setTripActive(false);
         setUserLocation(null);
         setPassengers(0);
-        const msg =
-          err.status === 403 ? 'This ride is not assigned to you.' :
-          err.status === 409 ? 'This ride has already been started or cancelled.' :
+        const msg = err.status === 403 
+          ? 'This ride is not assigned to you.' 
+          : err.status === 409 ? 'This ride has already been started or cancelled.' :
           'This ride is no longer available — the passenger may have cancelled.';
-        alert(msg);
+        setToast(msg);
       } else {
-        alert('Failed to start the ride. Please check your connection and try again.');
+        setToast('Failed to start the ride. Please check your connection and try again.');
       }
     } finally {
       setBusy(false);
@@ -875,8 +981,7 @@ export default function Driver() {
         lang,
       );
     } catch (err) {
-      console.error('[Driver] Failed to complete ride:', err);
-      alert('Failed to complete the ride. Please try again.');
+      setToast('Failed to complete ride. Please try again.');
     } finally {
       setBusy(false);
     }
@@ -909,7 +1014,7 @@ export default function Driver() {
         lang,
       );
     } catch (err) {
-      console.error('[Driver] Failed to cancel active ride:', err);
+      setToast('Failed to cancel active ride. Please try again.');
       // FIX: Handle stale/already-cancelled rides gracefully by clearing local state
       if (err.status === 404 || err.status === 409 || err.status === 403) {
         setTripActive(false);
@@ -917,9 +1022,9 @@ export default function Driver() {
         clearActiveDriverRide();
         setUserLocation(null);
         setPassengers(0);
-        alert(err.message || 'This ride is no longer available.');
+        setToast(err.message || 'This ride is no longer available.');
       } else {
-        alert('Failed to cancel the ride. Please check your connection and try again.');
+        setToast('Failed to cancel the ride. Please check your connection and try again.');
       }
     } finally {
       setBusy(false);
@@ -936,7 +1041,8 @@ export default function Driver() {
       lat: pos.lat, lng: pos.lng,
       status: 'SOS',
     });
-    window.open('tel:+917328060281');
+    setToast('SOS alert sent. Calling control room...'); 
+    window.location.href = `tel:${import.meta.env.VITE_SUPPORT_PHONE || '+910000000000'}`;
   };
 
   // ── Sign out ─────────────────────────────────────────────────
@@ -1004,7 +1110,7 @@ export default function Driver() {
           </button>
         </div>
 
-        <p className="drv-auth-note">Vehicle IDs are assigned by MoveOn Go admin. Contact +91 73280 60281 for registration.</p>
+        <p className="drv-auth-note">Vehicle IDs are assigned by admin. Contact {import.meta.env.VITE_SUPPORT_PHONE || 'Support'} for registration.</p>
       </div>
     </div>
   );
@@ -1115,11 +1221,11 @@ export default function Driver() {
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
                 <div style={{ 
                   width: 6, height: 6, borderRadius: '50%', 
-                  background: socketConnected ? 'var(--green-600)' : 'var(--danger)',
-                  boxShadow: socketConnected ? '0 0 6px var(--green-600)' : 'none'
+                  background: socketConnected ? 'var(--green-600)' : isReconnecting ? 'var(--warning)' : 'var(--danger)',
+                  boxShadow: socketConnected ? '0 0 6px var(--green-600)' : isReconnecting ? '0 0 6px var(--warning)' : 'none'
                 }} />
-                <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--gray-500)', letterSpacing: '0.4px' }}>
-                  {socketConnected ? 'SERVER CONNECTED' : 'SERVER DISCONNECTED'}
+                <span style={{ fontSize: 9, fontWeight: 800, color: 'var(--gray-500)', letterSpacing: '0.5px', textTransform: 'uppercase' }}>
+                  {socketConnected ? 'Server Online' : isReconnecting ? 'Reconnecting...' : 'Server Offline'}
                 </span>
               </div>
             )}
@@ -1175,7 +1281,7 @@ export default function Driver() {
             <button 
               className="btn btn--danger btn--full" 
               style={{height: 40, fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8}}
-              onClick={() => window.open('tel:+917328060281')}
+              onClick={() => window.location.href = `tel:${import.meta.env.VITE_SUPPORT_PHONE}`}
             >
               <PhoneIcon /> {t.techSupport}
             </button>
@@ -1184,7 +1290,14 @@ export default function Driver() {
 
         {activeRide && (
           <div className="drv-combined-ride-area">
-          <div className="drv-active-ride-card card" style={{margin:'12px 16px',padding:'16px'}}>
+          <div className="drv-active-ride-card card" style={{margin:'12px 16px',padding:'16px', position:'relative'}}>
+            {activeRide.passengerPhone && (
+              <a href={`tel:${activeRide.passengerPhone}`} className="br-call-btn" style={{position:'absolute', right:16, top:16, width:44, height:44, background:'var(--green-600)', color:'white', borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center', boxShadow:'0 4px 12px rgba(22, 163, 74, 0.2)'}}>
+                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 10.8a19.79 19.79 0 01-3.07-8.67A2 2 0 012 0h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L6.09 7.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/></svg>
+              </a>
+            )}
+            <div style={{fontSize: 16, fontWeight: 700, marginBottom: 4, color: 'var(--gray-900)'}}>{activeRide.passengerName || 'Passenger'}</div>
+            <div style={{fontSize: 11, fontWeight: 600, color: 'var(--gray-400)', textTransform: 'uppercase', marginBottom: 12}}>Active Booking</div>
             {!tripActive && activeRide.pickupLat && activeRide.pickupLng && (
               <button 
                 className="btn btn--secondary btn--full" 
@@ -1207,7 +1320,7 @@ export default function Driver() {
                <button 
                  className="btn btn--success btn--full" 
                  style={{marginTop: 16, height: 48, fontWeight: 700, fontSize: 14}}
-                 onClick={(e) => { e.target.disabled = true; e.target.innerText = `✅ ${t.cashReceived}`; alert(t.confirmCash); }}
+                 onClick={(e) => { e.target.disabled = true; e.target.innerText = `✅ ${t.cashReceived}`; setToast(t.confirmCash); }}
                >
                  💵 {t.cashReceived}
                </button>
@@ -1300,13 +1413,13 @@ export default function Driver() {
 
         {onDuty && (
           <div className="drv-actions">
-            <button className="drv-action-btn" onClick={() => alert('Feature integration: This would open a live QR scanner to follow the passenger tracking link.')}>
+            <button className="drv-action-btn" onClick={() => setToast('QR Scanner: Feature coming soon in the next update.')}>
               <QrIcon /><span>{t.scanQr}</span>
             </button>
             <button className="drv-action-btn" onClick={() => setIssueSheet(true)}>
               <WarningIcon /><span>{t.reportIssue}</span>
             </button>
-            <button className="drv-action-btn" onClick={() => window.open('tel:+917328060281')}>
+            <button className="drv-action-btn" onClick={() => window.location.href = `tel:${import.meta.env.VITE_SUPPORT_PHONE}`}>
               <PhoneIcon /><span>{t.callControl}</span>
             </button>
             <button className="drv-action-btn drv-action-btn--sos" onClick={handleSOS}>

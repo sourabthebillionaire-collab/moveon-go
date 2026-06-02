@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import Header from '../components/Header';
@@ -21,7 +21,9 @@ L.Icon.Default.mergeOptions({
 function vehicleIcon(v) {
   const colors = { bus: '#1565C0', auto: '#E6A800', cab: '#1565C0' };
   const type = v.type || 'bus';
-  const bg = colors[type] || colors.bus;
+  const isOffline = v.status === 'offline';
+  const bg = isOffline ? '#64748B' : (colors[type] || colors.bus);
+  const opacity = isOffline ? 0.7 : 1;
   // FIX: Show route number on marker for buses, otherwise vehicle type
   const label = (type === 'bus' && v.routeNumber) ? v.routeNumber : type.toUpperCase();
   // Added: Rotation based on bearing for better spatial awareness
@@ -29,9 +31,53 @@ function vehicleIcon(v) {
 
   return L.divIcon({
     className: 'vehicle-marker-glide',
-    html: `<div class="marker-interpolated" style="transform: rotate(${rotation}deg); background:${bg};color:#fff;font-size:10px;font-weight:700;padding:4px 8px;border-radius:6px;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.25);font-family:Inter,sans-serif;border:1.5px solid rgba(255,255,255,0.3); transition: all 0.5s linear;">${label}</div>`,
+    html: `<div class="marker-interpolated" style="transform: rotate(${rotation}deg); background:${bg}; opacity: ${opacity}; color:#fff;font-size:10px;font-weight:700;padding:4px 8px;border-radius:6px;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.25);font-family:Inter,sans-serif;border:1.5px solid rgba(255,255,255,0.3); transition: all 0.5s linear;">${label}</div>`,
     iconAnchor: [22, 14], popupAnchor: [0, -16],
   });
+}
+
+function RecenterIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--blue-600)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 12h3M22 12h-3M12 2v3M12 22v-3"/>
+      <circle cx="12" cy="12" r="7"/>
+      <circle cx="12" cy="12" r="2" fill="currentColor"/>
+    </svg>
+  );
+}
+
+function FollowMeIcon({ active }) {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill={active ? "white" : "none"} stroke={active ? "white" : "var(--blue-600)"} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <polygon points="3 11 22 2 13 21 11 13 3 11"/>
+    </svg>
+  );
+}
+
+function ShareMapIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--blue-600)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8M16 6l-4-4-4 4M12 2v13"/>
+    </svg>
+  );
+}
+
+function RadiusSearchIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+      <circle cx="11" cy="11" r="2" fill="currentColor" opacity="0.3"/>
+    </svg>
+  );
+}
+
+function AreaIcon({ active }) {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={active ? "white" : "var(--blue-600)"} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" strokeDasharray="3 3"/>
+      <circle cx="12" cy="12" r="2" fill="currentColor"/>
+    </svg>
+  );
 }
 
 function userIcon() {
@@ -55,14 +101,23 @@ export default function MapView() {
   const userPosRef  = useRef(null); // FIX: Latest user location for socket callbacks
   const focusRef    = useRef(null); // FIX: Prevent race conditions in focusVehicle
   const userMkrRef  = useRef(null);
+  const followMeRef = useRef(false); // Ref for GPS callback to avoid stale closure
+  const searchCircleRef = useRef(null);
+  const showSearchAreaRef = useRef(true);
+  const searchRadiusRef = useRef(20);
+  const [searchParams] = useSearchParams();
 
   const [vehicles,    setVehicles]    = useState([]);
   const [selected,    setSelected]    = useState(null);
   const [userPos,     setUserPos]     = useState(null);
   const [routeInfo,   setRouteInfo]   = useState(null);
   const [loadRoute,   setLoadRoute]   = useState(false);
-  const [filter,      setFilter]      = useState('all');
+  const [filter,      setFilter]      = useState(searchParams.get('filter') || 'all');
   const [loading,     setLoading]     = useState(true);
+  const [followMe,    setFollowMe]    = useState(false);
+  const [searchRadius, setSearchRadius] = useState(Number(searchParams.get('radius')) || 20);
+  const [showSearchArea, setShowSearchArea] = useState(() => localStorage.getItem('map_show_area') !== 'false');
+  const [radiusExpanded, setRadiusExpanded] = useState(false);
   
   // ✅ Persistent state to keep data visible during the slide-down animation
   const [displayVehicle, setDisplayVehicle] = useState(null);
@@ -70,19 +125,40 @@ export default function MapView() {
     if (selected) setDisplayVehicle(selected);
   }, [selected]);
 
-  const routeState = useLocation().state || {};
+  // ✅ Sync refs for effects and callbacks
+  useEffect(() => { showSearchAreaRef.current = showSearchArea; }, [showSearchArea]);
+  useEffect(() => { searchRadiusRef.current = searchRadius; }, [searchRadius]);
+
+  const location = useLocation();
+  const routeState = location.state || {};
   const navigate = useNavigate();
 
-  const DEFAULT_CENTER = [20.296, 85.824]; // Move to config/env eventually
+  const DEFAULT_CENTER = [
+    Number(import.meta.env.VITE_MAP_CENTER_LAT) || 20.296,
+    Number(import.meta.env.VITE_MAP_CENTER_LNG) || 85.824
+  ];
 
   // Init map
   useEffect(() => {
     if (mapInst.current) return;
-    const map = L.map(mapRef.current, { center: DEFAULT_CENTER, zoom: 13, zoomControl: false });
+    const latParam = searchParams.get('lat');
+    const lngParam = searchParams.get('lng');
+    const zoomParam = searchParams.get('zoom');
+    const initialCenter = (latParam && lngParam) ? [parseFloat(latParam), parseFloat(lngParam)] : DEFAULT_CENTER;
+    const initialZoom = zoomParam ? parseInt(zoomParam, 10) : 13;
+
+    const map = L.map(mapRef.current, { center: initialCenter, zoom: initialZoom, zoomControl: false });
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '© OpenStreetMap contributors', maxZoom: 19,
     }).addTo(map);
     L.control.zoom({ position: 'topright' }).addTo(map);
+
+    // ✅ Disable Follow Me if the user manually drags the map
+    map.on('dragstart', () => {
+      setFollowMe(false);
+      followMeRef.current = false;
+    });
+
     mapInst.current = map;
     return () => { if (mapInst.current) { mapInst.current.remove(); mapInst.current = null; } };
   }, []);
@@ -96,14 +172,72 @@ export default function MapView() {
       if (!map) return;
       if (userMkrRef.current) {
         userMkrRef.current.setLatLng([pos.lat, pos.lng]);
+        if (searchCircleRef.current) {
+          searchCircleRef.current.setLatLng([pos.lat, pos.lng]);
+        }
       } else {
         userMkrRef.current = L.marker([pos.lat, pos.lng], { icon: userIcon(), zIndexOffset: 1000 })
           .bindPopup('<b>You are here</b>').addTo(map);
+
+        // ✅ Add search radius visual if enabled
+        if (showSearchAreaRef.current) {
+          searchCircleRef.current = L.circle([pos.lat, pos.lng], {
+            radius: searchRadiusRef.current * 1000, 
+            color: '#1565C0',
+            fillColor: '#1565C0',
+            fillOpacity: 0.05,
+            weight: 1.5,
+            dashArray: '5, 10',
+            interactive: false
+          }).addTo(map);
+        }
+
         map.setView([pos.lat, pos.lng], 14);
+      }
+
+      // ✅ Auto-center map if Follow Me mode is active
+      if (followMeRef.current) {
+        map.panTo([pos.lat, pos.lng]);
       }
     });
     return () => unsub();
   }, []);
+
+  // ✅ Sync map circle and trigger pulse
+  useEffect(() => {
+    if (searchCircleRef.current) {
+      searchCircleRef.current.setRadius(searchRadius * 1000);
+    }
+
+    // Trigger visual pulse animation to highlight the new search area
+    const map = mapInst.current;
+    const pos = userPosRef.current;
+    if (map && pos) {
+      const pulse = L.circle([pos.lat, pos.lng], {
+        radius: 0,
+        color: '#1565C0',
+        fillColor: '#1565C0',
+        fillOpacity: 0.3,
+        weight: 2,
+        interactive: false
+      }).addTo(map);
+
+      let start = null;
+      const duration = 600; // Snappy animation duration
+      const animate = (timestamp) => {
+        if (!start) start = timestamp;
+        const progress = (timestamp - start) / duration;
+        if (progress < 1) {
+          pulse.setRadius(searchRadius * 1000 * progress);
+          pulse.setStyle({ opacity: 1 - progress, fillOpacity: (1 - progress) * 0.3 });
+          requestAnimationFrame(animate);
+        } else {
+          pulse.remove();
+        }
+      };
+      requestAnimationFrame(animate);
+    }
+  }, [searchRadius]);
 
   // Fetch nearby vehicles from backend (REST fallback)
   useEffect(() => {
@@ -131,15 +265,17 @@ export default function MapView() {
     
     Object.entries(markersRef.current).forEach(([id, marker]) => {
       const vehicle = vehicles.find(v => String(v.id) === id);
-      if (filter !== 'all' && vehicle && vehicle.type !== filter) {
+      // Remove marker if not in current list (Radius/Snapshot changed) or filter mismatch
+      if (!vehicle || (filter !== 'all' && vehicle.type !== filter)) {
         mapInst.current.removeLayer(marker);
         delete markersRef.current[id];
+        delete timestampsRef.current[id];
       }
     });
     
     // Re-sync current visible vehicles
     vehicles.forEach(v => addOrUpdateMarker(v));
-  }, [filter]);
+  }, [filter, vehicles]);
 
   // ── Real-time socket updates ──────────────────────────────────
   useEffect(() => {
@@ -148,7 +284,7 @@ export default function MapView() {
     // Tell server we're a rider — it will send back all active vehicles immediately
     const announce = () => {
       const pos = userPosRef.current;
-      socket.emit('rider:connected', pos ? { lat: pos.lat, lng: pos.lng } : null);
+      socket.emit('rider:connected', pos ? { lat: pos.lat, lng: pos.lng, radius: searchRadius } : null);
     };
 
     if (socket.connected) announce();
@@ -175,31 +311,22 @@ export default function MapView() {
       });
     });
 
-    // ✅ Remove marker when driver disconnects
+    // ✅ Keep marker but grey it out when driver goes offline
     const unsubOffline = onDriverOffline(({ driverId }) => {
       const id = String(driverId);
-      if (markersRef.current[id]) {
-        if (mapInst.current) {
-          mapInst.current.removeLayer(markersRef.current[id]);
+      setVehicles(prev => {
+        const exists = prev.find(v => String(v.id) === id);
+        if (exists) {
+          const updated = { ...exists, status: 'offline', speed: 0, ts: Date.now() };
+          addOrUpdateMarker(updated);
+          return prev.map(v => String(v.id) === id ? updated : v);
         }
-        delete markersRef.current[id];
-        delete timestampsRef.current[id];
-      }
-      setVehicles(prev => prev.filter(v => String(v.id) !== id));
-      
-      // FIX: If selected vehicle goes offline, clear local state and polyline
-      setSelected(s => {
-        if (s && String(s.id) === id) {
-          if (routeRef.current && mapInst.current) {
-            mapInst.current.removeLayer(routeRef.current);
-            routeRef.current = null;
-          }
-          setRouteInfo(null);
-          return null;
-        }
-        return s;
+        return prev;
       });
     });
+
+    // Refresh fleet on radius or filter change
+    announce();
 
     return () => {
       socket.off('connect', announce);
@@ -207,19 +334,21 @@ export default function MapView() {
       unsubUpdate();
       unsubOffline();
     };
-  }, [filter]); // Re-bind so listener has access to latest filter state
+  }, [filter, searchRadius]); // Re-bind so listener has access to latest filter and radius
 
   // FIX: Auto-focus vehicle from navigation state (e.g. when coming from Bus List)
   useEffect(() => {
-    if (vehicles.length > 0 && routeState.busId) {
-      const target = vehicles.find(v => String(v.id) === String(routeState.busId));
+    const busIdParam = searchParams.get('busId');
+    const targetId = routeState.busId || busIdParam;
+    if (vehicles.length > 0 && targetId) {
+      const target = vehicles.find(v => String(v.id) === String(targetId));
       if (target) {
         focusVehicle(target);
         // Clear navigation state so it doesn't keep re-focusing on every data update
         navigate(location.pathname, { replace: true, state: { ...routeState, busId: null } });
       }
     }
-  }, [vehicles, routeState.busId]);
+  }, [vehicles, routeState.busId, searchParams]);
 
   function addOrUpdateMarker(v) {
     const map = mapInst.current;
@@ -254,11 +383,21 @@ export default function MapView() {
     const route   = isBus && v.routeFrom && v.routeTo ? `${v.routeFrom} → ${v.routeTo}` : (v.from && v.to ? `${v.from} → ${v.to}` : '');
     const routeNo = isBus && v.routeNumber ? `Route ${v.routeNumber} · ` : '';
 
+    let updateLabel = '';
+    if (v.status === 'offline' && v.ts) {
+      const diff = Math.floor((Date.now() - v.ts) / 60000);
+      const timeStr = diff < 1 ? 'Just now' : `${diff}m ago`;
+      updateLabel = `<div style="font-size:10px; color:#94A3B8; margin-top:2px">Last update: ${timeStr}</div>`;
+    }
+
     return `<div style="font-family:Inter,sans-serif;font-size:12px;min-width:160px;line-height:1.6">
       <div style="font-weight:700;font-size:13px;margin-bottom:2px;color:#0D47A1">${title}</div>
       ${v.vehicleNumber ? `<div style="color:#94A3B8;font-size:11px;margin-bottom:4px">${v.vehicleNumber}</div>` : ''}
       ${route ? `<div style="color:#374151;font-size:12px;margin-bottom:2px">🛣 ${routeNo}${route}</div>` : ''}
-      <div style="color:#6B7280">⚡ ${v.speed || 0} km/h &nbsp;·&nbsp; ${v.status || 'Active'}</div>
+      <div style="color:#6B7280">
+        ⚡ ${v.speed || 0} km/h &nbsp;·&nbsp; ${v.status || 'Active'}
+        ${updateLabel}
+      </div>
       <div style="margin-top:8px; border-top:1px solid #eee; padding-top:8px;">
         <a href="https://www.openstreetmap.org/?mlat=${v.lat}&mlon=${v.lng}#map=16/${v.lat}/${v.lng}" 
            target="_blank" 
@@ -303,6 +442,89 @@ export default function MapView() {
     setLoadRoute(false);
   }
 
+  const handleRecenter = () => {
+    if (!userPos) {
+      // Optional: replace with a custom toast if available
+      console.warn("Recenter failed: Waiting for GPS signal...");
+      return;
+    }
+
+    if (mapInst.current) {
+      mapInst.current.flyTo([userPos.lat, userPos.lng], 16, {
+        duration: 1.2,
+        easeLinearity: 0.25
+      });
+      
+      // Open popup after the flight animation finishes for better UX
+      mapInst.current.once('moveend', () => {
+        if (userMkrRef.current) userMkrRef.current.openPopup();
+      });
+    }
+  };
+
+  const toggleFollowMe = () => {
+    const next = !followMe;
+    setFollowMe(next);
+    followMeRef.current = next;
+    if (next) handleRecenter();
+    window.navigator?.vibrate?.(10);
+  };
+
+  const toggleSearchArea = () => {
+    const next = !showSearchArea;
+    setShowSearchArea(next);
+    showSearchAreaRef.current = next;
+    localStorage.setItem('map_show_area', String(next));
+    
+    const map = mapInst.current;
+    const pos = userPosRef.current;
+
+    if (!next && searchCircleRef.current) {
+      searchCircleRef.current.remove();
+      searchCircleRef.current = null;
+    } else if (next && pos && map) {
+      searchCircleRef.current = L.circle([pos.lat, pos.lng], {
+        radius: searchRadius * 1000,
+        color: '#1565C0',
+        fillColor: '#1565C0',
+        fillOpacity: 0.05,
+        weight: 1.5,
+        dashArray: '5, 10',
+        interactive: false
+      }).addTo(map);
+    }
+    window.navigator?.vibrate?.(10);
+  };
+
+  const handleShareMap = async () => {
+    if (!mapInst.current) return;
+    const map = mapInst.current;
+    const center = map.getCenter();
+    const zoom = map.getZoom();
+    
+    const url = new URL(window.location.origin + window.location.pathname);
+    url.searchParams.set('lat', center.lat.toFixed(6));
+    url.searchParams.set('lng', center.lng.toFixed(6));
+    url.searchParams.set('zoom', zoom.toString());
+    url.searchParams.set('filter', filter);
+    url.searchParams.set('radius', searchRadius.toString());
+    if (selected) url.searchParams.set('busId', String(selected.id));
+
+    const shareData = {
+      title: 'MoveOn Go Live Fleet',
+      text: 'Track live buses, autos and cabs on MoveOn Go! 🚌🚕',
+      url: url.toString()
+    };
+
+    if (navigator.share && navigator.canShare && navigator.canShare(shareData)) {
+      try { await navigator.share(shareData); } catch {}
+    } else {
+      await navigator.clipboard.writeText(url.toString());
+      alert('Deep link copied to clipboard! 🔗');
+    }
+    window.navigator?.vibrate?.(10);
+  };
+
   const filtered = filter === 'all' ? vehicles : vehicles.filter(v => v.type === filter);
 
   return (
@@ -327,11 +549,134 @@ export default function MapView() {
                 {f === 'all' ? 'All' : f.charAt(0).toUpperCase()+f.slice(1)}
               </button>
             ))}
+            {/* Radius Selector */}
+            <div style={{ width: 1, background: 'var(--gray-200)', margin: '0 4px' }} />
+            <div style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              padding: '0 4px',
+              transition: 'all 0.3s ease'
+            }}>
+               <button 
+                 onClick={() => setRadiusExpanded(!radiusExpanded)}
+                 style={{ background: 'none', border: 'none', padding: '4px', cursor: 'pointer', display: 'flex', alignItems: 'center', color: radiusExpanded ? 'var(--blue-600)' : 'var(--gray-400)', transition: 'color 0.2s' }}
+               >
+                 <RadiusSearchIcon />
+               </button>
+               {radiusExpanded && (
+                 <select 
+                   value={searchRadius} 
+                   onChange={e => setSearchRadius(Number(e.target.value))}
+                   style={{ background: 'none', border: 'none', fontSize: '11px', fontWeight: 700, color: 'var(--blue-600)', outline: 'none', cursor: 'pointer', paddingLeft: '4px', animation: 'map-fade-in 0.3s ease forwards' }}
+                 >
+                   {[5, 10, 20, 50].map(r => <option key={r} value={r}>{r}km</option>)}
+                 </select>
+               )}
+            </div>
           </div>
         </div>
 
         {/* Map */}
         <div ref={mapRef} className="map-canvas" />
+
+        {/* Map Control Group */}
+        <div className="map-control-group" style={{
+          position: 'absolute',
+          bottom: selected ? '240px' : '110px',
+          right: '16px',
+          zIndex: 1000,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '12px',
+          transition: 'bottom 0.4s cubic-bezier(0.4, 0, 0.2, 1)'
+        }}>
+          {/* Follow Me Toggle */}
+          <button 
+            onClick={toggleFollowMe}
+            className={`map-recenter-btn ${followMe ? 'active' : ''}`}
+            aria-label="Toggle Follow Me"
+            style={{
+              width: '48px',
+              height: '48px',
+              borderRadius: '50%',
+              background: followMe ? 'var(--blue-600)' : 'white',
+              border: 'none',
+              boxShadow: '0 4px 15px rgba(0,0,0,0.2)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer'
+            }}
+          >
+            <FollowMeIcon active={followMe} />
+          </button>
+
+          {/* Share Map Button */}
+          <button 
+            onClick={handleShareMap}
+            className="map-recenter-btn"
+            aria-label="Share Map View"
+            style={{
+              width: '48px',
+              height: '48px',
+              borderRadius: '50%',
+              background: 'white',
+              border: 'none',
+              boxShadow: '0 4px 15px rgba(0,0,0,0.2)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer'
+            }}
+          >
+            <ShareMapIcon />
+            <span style={{fontSize: 10, fontWeight: 700, color: 'var(--gray-500)', letterSpacing: '0.4px', textTransform: 'uppercase', marginTop: 4}}>
+              Share
+            </span>
+          </button>
+
+          {/* Search Area Toggle */}
+          <button 
+            onClick={toggleSearchArea}
+            className={`map-recenter-btn ${showSearchArea ? 'active' : ''}`}
+            aria-label="Toggle Search Area"
+            style={{
+              width: '48px',
+              height: '48px',
+              borderRadius: '50%',
+              background: showSearchArea ? 'var(--blue-600)' : 'white',
+              border: 'none',
+              boxShadow: '0 4px 15px rgba(0,0,0,0.2)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center', flexDirection: 'column',
+              cursor: 'pointer'
+            }}
+          >
+            <AreaIcon active={showSearchArea} />
+          </button>
+
+          {/* Re-center Button */}
+        <button 
+          onClick={handleRecenter}
+          className="map-recenter-btn"
+          aria-label="Recenter Map"
+          style={{
+            width: '48px',
+            height: '48px',
+            borderRadius: '50%',
+            background: 'white',
+            border: 'none',
+            boxShadow: '0 4px 15px rgba(0,0,0,0.2)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer'
+          }}
+        >
+          <RecenterIcon />
+        </button>
+        </div>
 
         {/* Bottom panel */}
         <div className="map-panel">
@@ -391,6 +736,11 @@ export default function MapView() {
                     <div className="map-detail__status">
                       <span className="live-dot" style={{width:6,height:6}}/>
                       {displayVehicle.status || 'Active'} · {displayVehicle.speed || 0} km/h
+                      {displayVehicle.status === 'offline' && displayVehicle.ts && (
+                        <span style={{ marginLeft: 6, opacity: 0.8, fontSize: '0.95em' }}>
+                          · Last active: {Math.floor((Date.now() - displayVehicle.ts) / 60000) < 1 ? 'Just now' : `${Math.floor((Date.now() - displayVehicle.ts) / 60000)}m ago`}
+                        </span>
+                      )}
                     </div>
                   </div>
                   {loadRoute ? (

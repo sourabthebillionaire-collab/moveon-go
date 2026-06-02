@@ -7,6 +7,7 @@ import { getCurrentPosition, reverseGeocode } from '../services/geocoding';
 import { useAuth } from '../hooks/useAuth';
 import api from '../services/api';
 import { getToken } from '../services/storage';
+import { useConfig } from '../context/ConfigContext';
 import './Home.css';
 
 const VEHICLE_TYPES = [
@@ -17,7 +18,7 @@ const VEHICLE_TYPES = [
 
 export default function Home() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, updateUser } = useAuth();
 
   const [locLabel,   setLocLabel]   = useState('');
   const [locCoords,  setLocCoords]  = useState(null);
@@ -26,9 +27,12 @@ export default function Home() {
   const [dest,       setDest]       = useState('');
   const [destCoords, setDestCoords] = useState(null);
   const [tripCount,  setTripCount]  = useState(0);
+  const dynamicConfig = useConfig();
+  const [isAlertDismissed, setIsAlertDismissed] = useState(false);
 
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+  // Bug #2 & #3: Display user name if available; will be hydrated from backend via getProfile
   const firstName = user?.name?.split(' ')[0] || user?.phone?.slice(-4) || 'Guest';
 
   useEffect(() => {
@@ -54,8 +58,25 @@ export default function Home() {
       api.getBookings(token)
         .then(d => setTripCount((d.bookings || []).length))
         .catch(() => {});
+      
+      // Bug #2 & #3 FIX: Hydrate full user profile to sync name/email immediately
+      // This ensures greeting and profile page display correct user data on first load
+      api.getProfile(token)
+        .then(data => {
+          if (data.user && updateUser) {
+            updateUser(data.user);
+          }
+        })
+        .catch(() => {});
     }
   }, []);
+
+  useEffect(() => {
+    if (dynamicConfig?.alertId) {
+      const dismissedId = localStorage.getItem('dismissed_alert_id');
+      if (dismissedId === String(dynamicConfig.alertId)) setIsAlertDismissed(true);
+    }
+  }, [dynamicConfig]);
 
   const handleSearch = () => {
     if (destCoords) navigate('/map', { state: { from: locCoords, fromLabel: locLabel, to: destCoords, toLabel: dest } });
@@ -78,10 +99,38 @@ export default function Home() {
     } finally { setLocLoad(false); }
   };
 
+  const dismissAlert = () => {
+    if (dynamicConfig?.alertId) {
+      localStorage.setItem('dismissed_alert_id', String(dynamicConfig.alertId));
+      setIsAlertDismissed(true);
+    }
+  };
+
+  const getAlertIcon = (severity) => {
+    if (severity === 'critical') return '🚨';
+    if (severity === 'warning') return '⚠️';
+    return 'ℹ️';
+  };
+
   return (
     <div className="app">
       <Header />
       <div className="page home-page">
+
+        {/* Emergency Alert Banner */}
+        {dynamicConfig?.alertMessage && !isAlertDismissed && (
+          <div className={`home-alert slide-up home-alert--${dynamicConfig.alertSeverity || 'info'}`}>
+            <div className="home-alert__content">
+              <span className="home-alert__icon">
+                {getAlertIcon(dynamicConfig.alertSeverity)}
+              </span>
+              <div className="home-alert__text">
+                {dynamicConfig.alertMessage}
+              </div>
+            </div>
+            <button className="home-alert__close" onClick={dismissAlert} aria-label="Dismiss alert">✕</button>
+          </div>
+        )}
 
         {/* ── Hero ──────────────────────────── */}
         <div className="home-hero">
