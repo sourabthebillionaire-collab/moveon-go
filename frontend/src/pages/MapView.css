@@ -1,29 +1,114 @@
 .map-page {
-  padding-top: var(--header-h);
+  padding-top: 0; /* Header integration handled by flex */
   height: 100%;
   height: 100dvh;
   display: flex;
   flex-direction: column;
+  background: var(--gray-50);
 }
 
 .map-filters {
-  display: flex; gap: 10px; overflow-x: auto;
-  scrollbar-width: none; padding: 12px 16px;
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 16px 20px;
   background: var(--white);
-  border-bottom: 1px solid var(--gray-200);
   flex-shrink: 0;
+  z-index: 20;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.03);
 }
 .map-filters::-webkit-scrollbar { display: none; }
 
-.map-canvas { flex: 1; min-height: 0; z-index: 1; }
+.map-filter-chip {
+  padding: 8px 20px;
+  border-radius: 20px;
+  background: var(--gray-100);
+  border: 1px solid transparent;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--gray-600);
+  white-space: nowrap;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  cursor: pointer;
+}
+
+.map-filter-chip.active {
+  background: var(--blue-800);
+  color: white;
+  box-shadow: 0 4px 12px rgba(21, 101, 192, 0.25);
+}
+
+.map-canvas-container {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  z-index: 1;
+}
+
+.map-canvas { 
+  width: 100%;
+  height: 100%;
+}
+
+/* Requirement 1 & 2: Floating Action Hub */
+.map-controls-group {
+  position: absolute;
+  bottom: 24px;
+  right: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  z-index: 1000;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.map-control-btn {
+  width: 52px;
+  height: 52px;
+  background: var(--white);
+  border: none;
+  border-radius: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.12);
+  color: var(--gray-700);
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.map-control-btn:hover {
+  background: var(--gray-50);
+  transform: translateY(-2px);
+}
+
+.map-control-btn:active {
+  transform: scale(0.9);
+}
+
+.map-control-btn.primary {
+  background: var(--blue-800);
+  color: white;
+}
 
 .map-panel {
   background: var(--white);
-  border-top: 1px solid var(--gray-200);
+  border-radius: 24px 24px 0 0;
   padding: 14px 0 calc(var(--nav-h) + 8px);
-  box-shadow: 0 -4px 16px rgba(0,0,0,0.06);
-  z-index: 10; flex-shrink: 0;
+  box-shadow: 0 -8px 30px rgba(0,0,0,0.08);
+  z-index: 10; 
+  flex-shrink: 0;
   max-height: 48vh; overflow-y: auto;
+}
+
+.map-panel-handle {
+  width: 40px;
+  height: 4px;
+  background: var(--gray-200);
+  border-radius: 2px;
+  margin: 0 auto 16px;
 }
 
 .map-empty {
@@ -34,6 +119,57 @@
 .map-empty__dot {
   width: 8px; height: 8px; border-radius: 50%;
   background: var(--gray-300); flex-shrink: 0;
+}
+
+/* Requirement 7: Modern Empty State Card */
+.map-empty-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  background: rgba(255,255,255,0.4);
+  backdrop-filter: blur(2px);
+  z-index: 50;
+  pointer-events: none;
+}
+
+.map-empty-card {
+  background: white;
+  padding: 32px 24px;
+  border-radius: 24px;
+  text-align: center;
+  box-shadow: 0 15px 35px rgba(0,0,0,0.1);
+  max-width: 320px;
+  animation: map-fade-in 0.4s ease-out;
+  pointer-events: auto;
+}
+
+.map-empty-icon {
+  width: 64px;
+  height: 64px;
+  background: var(--blue-50);
+  color: var(--blue-800);
+  border-radius: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 16px;
+}
+
+.map-empty-card h3 {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--gray-900);
+  margin: 0 0 8px;
+}
+
+.map-empty-card p {
+  font-size: 14px;
+  color: var(--gray-500);
+  line-height: 1.5;
+  margin: 0;
 }
 
 .map-detail { padding: 0 18px; }
@@ -97,6 +233,62 @@
   opacity: 0.6;
   animation: user-marker-ripple 2s ease-out infinite;
 }
+
+/* 'Search in this area' button */
+.map-search-here-btn {
+  position: absolute;
+  top: 74px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1001;
+  background: var(--blue-800);
+  color: white;
+  padding: 10px 20px;
+  border-radius: 40px;
+  font-size: 13px;
+  font-weight: 700;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+  border: 1px solid rgba(255,255,255,0.2);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  animation: map-fade-in 0.3s ease-out;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.map-search-here-btn:active {
+  transform: translateX(-50%) scale(0.96);
+}
+
+/* Requirement 6: Cleaner Tooltip Popup */
+.map-location-tooltip {
+  position: absolute;
+  top: 40%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: white;
+  padding: 8px 16px;
+  border-radius: 99px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 4px 15px rgba(0,0,0,0.15);
+  z-index: 1000;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--gray-900);
+  animation: map-fade-in 0.3s ease-out;
+}
+
+.tooltip-dot {
+  width: 8px;
+  height: 8px;
+  background: #1565C0;
+  border-radius: 50%;
+  animation: user-marker-ripple 1.5s infinite;
+}
+
 
 /* Enable smooth gliding for the marker container */
 .vehicle-marker-glide {

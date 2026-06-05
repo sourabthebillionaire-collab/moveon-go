@@ -115,6 +115,8 @@ export default function MapView() {
   const [filter,      setFilter]      = useState(searchParams.get('filter') || 'all');
   const [loading,     setLoading]     = useState(true);
   const [followMe,    setFollowMe]    = useState(false);
+  const [showLocationTooltip, setShowLocationTooltip] = useState(false);
+  const [showSearchButton, setShowSearchButton] = useState(false);
   const [searchRadius, setSearchRadius] = useState(Number(searchParams.get('radius')) || 20);
   const [showSearchArea, setShowSearchArea] = useState(() => localStorage.getItem('map_show_area') !== 'false');
   const [radiusExpanded, setRadiusExpanded] = useState(false);
@@ -128,6 +130,15 @@ export default function MapView() {
   // ✅ Sync refs for effects and callbacks
   useEffect(() => { showSearchAreaRef.current = showSearchArea; }, [showSearchArea]);
   useEffect(() => { searchRadiusRef.current = searchRadius; }, [searchRadius]);
+
+  // Requirement 6: Auto-dismiss location tooltip after 2.5 seconds
+  useEffect(() => {
+    if (showLocationTooltip) {
+      const timer = setTimeout(() => setShowLocationTooltip(false), 2500);
+      return () => clearTimeout(timer);
+    }
+  }, [showLocationTooltip]);
+
 
   const location = useLocation();
   const routeState = location.state || {};
@@ -157,6 +168,18 @@ export default function MapView() {
     map.on('dragstart', () => {
       setFollowMe(false);
       followMeRef.current = false;
+    });
+
+    // Show 'Search in this area' button when panning away from user location
+    map.on('moveend', () => {
+      if (!userPosRef.current) return;
+      const center = map.getCenter();
+      const userLatLng = L.latLng(userPosRef.current.lat, userPosRef.current.lng);
+      if (center.distanceTo(userLatLng) > 1500) {
+        setShowSearchButton(true);
+      } else {
+        setShowSearchButton(false);
+      }
     });
 
     mapInst.current = map;
@@ -442,6 +465,20 @@ export default function MapView() {
     setLoadRoute(false);
   }
 
+  const handleSearchThisArea = () => {
+    if (!mapInst.current) return;
+    const center = mapInst.current.getCenter();
+    const socket = getSocket();
+    // Force update fleet around new center
+    socket?.emit('rider:connected', { 
+      lat: center.lat, 
+      lng: center.lng, 
+      radius: searchRadius 
+    });
+    setShowSearchButton(false);
+    window.navigator?.vibrate?.(10);
+  };
+
   const handleRecenter = () => {
     if (!userPos) {
       // Optional: replace with a custom toast if available
@@ -459,6 +496,7 @@ export default function MapView() {
       mapInst.current.once('moveend', () => {
         if (userMkrRef.current) userMkrRef.current.openPopup();
       });
+      setShowLocationTooltip(true);
     }
   };
 
@@ -576,106 +614,82 @@ export default function MapView() {
           </div>
         </div>
 
+        {/* 'Search in this area' floating button */}
+        {showSearchButton && (
+          <button className="map-search-here-btn" onClick={handleSearchThisArea}>
+            <RadiusSearchIcon />
+            <span>Search in this area</span>
+          </button>
+        )}
+
         {/* Map */}
         <div ref={mapRef} className="map-canvas" />
+        
+        {/* Requirement 7: Professional Empty State Card */}
+        {!loading && filtered.length === 0 && (
+          <div className="map-empty-overlay">
+            <div className="map-empty-card">
+              <div className="map-empty-icon">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect width="16" height="16" x="4" y="3" rx="2"/>
+                  <path d="M4 11h16M8 15h.01M16 15h.01M6 19v2M18 19v2"/>
+                </svg>
+              </div>
+              <h3>No vehicles active nearby</h3>
+              <p>We're waiting for drivers to come online in your area. Please check back in a moment or expand your search radius.</p>
+            </div>
+          </div>
+        )}
 
-        {/* Map Control Group */}
-        <div className="map-control-group" style={{
-          position: 'absolute',
-          bottom: selected ? '240px' : '110px',
-          right: '16px',
-          zIndex: 1000,
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '12px',
-          transition: 'bottom 0.4s cubic-bezier(0.4, 0, 0.2, 1)'
+        {/* Requirement 6: Modern Tooltip (Auto-dismisses) */}
+        {showLocationTooltip && (
+          <div className="map-location-tooltip">
+            <div className="tooltip-dot" />
+            <span>You are here</span>
+          </div>
+        )}
+
+        {/* Requirement 1 & 2: Floating Action Hub (Grouped) */}
+        <div className="map-controls-group" style={{ 
+          bottom: selected ? '280px' : '100px',
+          transition: 'bottom 0.3s ease' 
         }}>
-          {/* Follow Me Toggle */}
+          {/* Focus Vehicle / Follow Me */}
           <button 
             onClick={toggleFollowMe}
-            className={`map-recenter-btn ${followMe ? 'active' : ''}`}
             aria-label="Toggle Follow Me"
-            style={{
-              width: '48px',
-              height: '48px',
-              borderRadius: '50%',
-              background: followMe ? 'var(--blue-600)' : 'white',
-              border: 'none',
-              boxShadow: '0 4px 15px rgba(0,0,0,0.2)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              cursor: 'pointer'
-            }}
+            className={`map-control-btn ${followMe ? 'primary' : ''} map-recenter-btn`}
           >
             <FollowMeIcon active={followMe} />
           </button>
 
-          {/* Share Map Button */}
+          {/* Share Map */}
           <button 
             onClick={handleShareMap}
-            className="map-recenter-btn"
+            className="map-control-btn"
             aria-label="Share Map View"
-            style={{
-              width: '48px',
-              height: '48px',
-              borderRadius: '50%',
-              background: 'white',
-              border: 'none',
-              boxShadow: '0 4px 15px rgba(0,0,0,0.2)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              cursor: 'pointer'
-            }}
           >
             <ShareMapIcon />
-            <span style={{fontSize: 10, fontWeight: 700, color: 'var(--gray-500)', letterSpacing: '0.4px', textTransform: 'uppercase', marginTop: 4}}>
-              Share
-            </span>
+            <span style={{fontSize: 9, fontWeight: 800, color: 'inherit', letterSpacing: '0.2px', textTransform: 'uppercase', marginTop: 2}}>Share</span>
           </button>
 
           {/* Search Area Toggle */}
           <button 
             onClick={toggleSearchArea}
-            className={`map-recenter-btn ${showSearchArea ? 'active' : ''}`}
+            className={`map-control-btn ${showSearchArea ? 'primary' : ''}`}
             aria-label="Toggle Search Area"
-            style={{
-              width: '48px',
-              height: '48px',
-              borderRadius: '50%',
-              background: showSearchArea ? 'var(--blue-600)' : 'white',
-              border: 'none',
-              boxShadow: '0 4px 15px rgba(0,0,0,0.2)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center', flexDirection: 'column',
-              cursor: 'pointer'
-            }}
           >
             <AreaIcon active={showSearchArea} />
           </button>
 
-          {/* Re-center Button */}
-        <button 
-          onClick={handleRecenter}
-          className="map-recenter-btn"
-          aria-label="Recenter Map"
-          style={{
-            width: '48px',
-            height: '48px',
-            borderRadius: '50%',
-            background: 'white',
-            border: 'none',
-            boxShadow: '0 4px 15px rgba(0,0,0,0.2)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            cursor: 'pointer'
-          }}
-        >
-          <RecenterIcon />
-        </button>
+          {/* Re-center / My Location */}
+          <button 
+            onClick={handleRecenter}
+            className="map-control-btn"
+            aria-label="Recenter Map"
+          >
+            <RecenterIcon />
+          </button>
         </div>
 
         {/* Bottom panel */}
@@ -702,13 +716,6 @@ export default function MapView() {
                   {v.vehicleNumber || v.number}
                 </button>
               ))}
-            </div>
-          )}
-
-          {!loading && filtered.length === 0 && (
-            <div className="map-empty">
-              <div className="map-empty__dot" />
-              <p>No {filter === 'all' ? 'vehicles' : filter+'s'} active near you right now</p>
             </div>
           )}
 
