@@ -6,7 +6,7 @@ import Header from '../components/Header';
 import BottomNav from '../components/BottomNav';
 import { watchPosition } from '../services/geocoding';
 import { getRoute, fmtDist, fmtDuration } from '../services/routing';
-import { connectSocket, getSocket, onVehiclesSnapshot, onVehiclesUpdate, onDriverOffline } from '../services/socket';
+import { connectSocket, getSocket, onVehiclesSnapshot, onVehiclesUpdate, onDriverOffline, announceRider } from '../services/socket';
 import api from '../services/api';
 import './MapView.css';
 
@@ -19,7 +19,7 @@ L.Icon.Default.mergeOptions({
 });
 
 function vehicleIcon(v) {
-  const colors = { bus: '#1565C0', auto: '#E6A800', cab: '#1565C0' };
+  const colors = { bus: '#1565C0', auto: '#E6A800', cab: '#1565C0', bike: '#DC2626' };
   const type = v.type || 'bus';
   const isOffline = v.status === 'offline';
   const bg = isOffline ? '#64748B' : (colors[type] || colors.bus);
@@ -116,6 +116,7 @@ export default function MapView() {
   const [loading,     setLoading]     = useState(true);
   const [followMe,    setFollowMe]    = useState(false);
   const [showLocationTooltip, setShowLocationTooltip] = useState(false);
+  const [locStatus,   setLocStatus]   = useState({ error: false, label: '' }); // FIX: Match Home.jsx location status logic
   const [showSearchButton, setShowSearchButton] = useState(false);
   const [searchRadius, setSearchRadius] = useState(Number(searchParams.get('radius')) || 20);
   const [showSearchArea, setShowSearchArea] = useState(() => localStorage.getItem('map_show_area') !== 'false');
@@ -189,6 +190,7 @@ export default function MapView() {
   // Get user GPS
   useEffect(() => {
     const unsub = watchPosition(pos => {
+      setLocStatus({ error: false, label: '' });
       setUserPos(pos);
       userPosRef.current = pos;
       const map = mapInst.current;
@@ -221,6 +223,25 @@ export default function MapView() {
       // ✅ Auto-center map if Follow Me mode is active
       if (followMeRef.current) {
         map.panTo([pos.lat, pos.lng]);
+      }
+    }, (err) => {
+      let msg = 'Location unavailable';
+      if (err.code === 1) msg = 'Location denied';
+      else if (err.code === 2) msg = 'GPS signal lost';
+      else if (err.code === 3) msg = 'Location timeout';
+      
+      setLocStatus({ error: true, label: msg });
+      setUserPos(null);
+      userPosRef.current = null;
+
+      // CLEANUP: Remove marker and search area visual if location signal is lost or denied
+      if (userMkrRef.current) {
+        userMkrRef.current.remove();
+        userMkrRef.current = null;
+      }
+      if (searchCircleRef.current) {
+        searchCircleRef.current.remove();
+        searchCircleRef.current = null;
       }
     });
     return () => unsub();
@@ -307,28 +328,27 @@ export default function MapView() {
     // Tell server we're a rider — it will send back all active vehicles immediately
     const announce = () => {
       const pos = userPosRef.current;
-      socket.emit('rider:connected', pos ? { lat: pos.lat, lng: pos.lng, radius: searchRadius } : null);
+      announceRider(pos ? { lat: pos.lat, lng: pos.lng, radius: searchRadius } : null);
     };
 
     if (socket.connected) announce();
     socket.on('connect', announce);
 
     // ✅ Snapshot — all active vehicles at the moment we connected
-    const unsubSnapshot = onVehiclesSnapshot((vehicles) => {
-      vehicles.forEach(v => addOrUpdateMarker(v));
-      setVehicles(vehicles);
+    const unsubSnapshot = onVehiclesSnapshot((snapshot) => {
+      setVehicles(snapshot);
       setLoading(false);
     });
 
     // ✅ Single vehicle live update — backend emits one vehicle at a time
     const unsubUpdate = onVehiclesUpdate((vehicle) => {
-      // FIX: Only draw if it matches current filter
-      if (filter === 'all' || vehicle.type === filter) {
-        addOrUpdateMarker(vehicle);
-      }
       setVehicles(prev => {
         const vid = String(vehicle.id);
         const exists = prev.find(v => String(v.id) === vid);
+        // Ensure we don't overwrite with older data
+        if (exists && vehicle.ts && exists.ts && vehicle.ts < exists.ts) {
+          return prev;
+        }
         if (exists) return prev.map(v => v.id === vehicle.id ? { ...v, ...vehicle } : v);
         return [...prev, vehicle];
       });
@@ -340,8 +360,12 @@ export default function MapView() {
       setVehicles(prev => {
         const exists = prev.find(v => String(v.id) === id);
         if (exists) {
-          const updated = { ...exists, status: 'offline', speed: 0, ts: Date.now() };
-          addOrUpdateMarker(updated);
+          const offlineTs = Date.now();
+          // Don't mark offline if we already have newer data
+          if (exists.ts && offlineTs < exists.ts) {
+            return prev;
+          }
+          const updated = { ...exists, status: 'offline', speed: 0, ts: offlineTs };
           return prev.map(v => String(v.id) === id ? updated : v);
         }
         return prev;
@@ -353,11 +377,11 @@ export default function MapView() {
 
     return () => {
       socket.off('connect', announce);
-      unsubSnapshot();
+      if (unsubSnapshot) unsubSnapshot();
       unsubUpdate();
       unsubOffline();
     };
-  }, [filter, searchRadius]); // Re-bind so listener has access to latest filter and radius
+  }, [filter, searchRadius, !!userPos]); // Re-request snapshot when GPS lock is first found
 
   // FIX: Auto-focus vehicle from navigation state (e.g. when coming from Bus List)
   useEffect(() => {
@@ -368,7 +392,9 @@ export default function MapView() {
       if (target) {
         focusVehicle(target);
         // Clear navigation state so it doesn't keep re-focusing on every data update
-        navigate(location.pathname, { replace: true, state: { ...routeState, busId: null } });
+        const nextParams = new URLSearchParams(searchParams);
+        nextParams.delete('busId');
+        navigate(`${location.pathname}?${nextParams.toString()}`, { replace: true, state: { ...routeState, busId: null } });
       }
     }
   }, [vehicles, routeState.busId, searchParams]);
@@ -376,6 +402,10 @@ export default function MapView() {
   function addOrUpdateMarker(v) {
     const map = mapInst.current;
     if (!map || !v.lat || !v.lng) return;
+
+    // FIX: Respect current filter
+    if (filter !== 'all' && v.type !== filter) return;
+
     const id = String(v.id);
     const existing = markersRef.current[id];
     
@@ -386,11 +416,23 @@ export default function MapView() {
     timestampsRef.current[id] = newTs;
 
     if (existing) {
-      // Polished: Use direct setLatLng. The CSS transition 'marker-interpolated' 
-      // in MapView.css will handle the visual glide.
       existing.setLatLng([v.lat, v.lng]);
       existing.setPopupContent(buildPopup(v));
-      existing.setIcon(vehicleIcon(v)); // Ensure icon labels update
+
+      // SMOOTH ANIMATION FIX: Avoid calling setIcon() on every location update.
+      // Re-setting the icon replaces the DOM node, which interrupts CSS transitions 
+      // and prevents the smooth "glide" effect. Instead, we update the bearing 
+      // (rotation) directly on the existing DOM element.
+      const el = existing.getElement();
+      if (el) {
+        const inner = el.querySelector('.marker-interpolated');
+        if (inner) {
+          inner.style.transform = `rotate(${v.bearing || 0}deg)`;
+        } else {
+          // Fallback: update icon if the structure was lost
+          existing.setIcon(vehicleIcon(v));
+        }
+      }
     } else {
       const m = L.marker([v.lat, v.lng], { icon: vehicleIcon(v) })
         .addTo(map)
@@ -432,6 +474,8 @@ export default function MapView() {
   }
 
   async function focusVehicle(v) {
+    if (!v || !v.lat || !v.lng) return;
+
     const vid = String(v.id);
     focusRef.current = vid;
     setSelected(v);
@@ -440,29 +484,37 @@ export default function MapView() {
     const map = mapInst.current;
     if (map) map.flyTo([v.lat, v.lng], 15, { duration: 1 });
 
-    if (!userPos) {
-      setLoadRoute(false); // BUG 7: Fixed stuck spinner
+    const startPos = userPosRef.current;
+    if (!startPos) {
+      setLoadRoute(false);
+      if (markersRef.current[vid]) markersRef.current[vid].openPopup();
       return;
     }
 
-    const route = await getRoute(userPos, { lat: v.lat, lng: v.lng });
+    try {
+      const route = await getRoute(startPos, { lat: v.lat, lng: v.lng });
+      const latestPos = userPosRef.current;
 
-    // RACE CONDITION FIX: Only update UI if the user hasn't selected another vehicle during the await
-    if (focusRef.current === vid && map) {
-      if (route) {
-        if (routeRef.current) map.removeLayer(routeRef.current);
-        routeRef.current = L.polyline(route.coordinates, {
-          color: '#1565C0', weight: 4, opacity: 0.8,
-          lineJoin: 'round', lineCap: 'round',
-        }).addTo(map);
-        map.fitBounds(L.latLngBounds([[userPos.lat, userPos.lng], [v.lat, v.lng]]).pad(0.2));
-        setRouteInfo(route);
+      // RACE CONDITION FIX: Only update UI if the user hasn't selected another vehicle during the await
+      // AND ensure the GPS signal wasn't lost (latestPos is still valid)
+      if (focusRef.current === vid && map) {
+        if (route && latestPos) {
+          if (routeRef.current) map.removeLayer(routeRef.current);
+          routeRef.current = L.polyline(route.coordinates, {
+            color: '#1565C0', weight: 4, opacity: 0.8,
+            lineJoin: 'round', lineCap: 'round',
+          }).addTo(map);
+          map.fitBounds(L.latLngBounds([[latestPos.lat, latestPos.lng], [v.lat, v.lng]]).pad(0.2));
+          setRouteInfo(route);
+        }
+        // Ensure popup is opened only for the currently focused marker
+        if (markersRef.current[vid]) markersRef.current[vid].openPopup();
       }
-      // Ensure popup is opened only for the currently focused marker
-      if (markersRef.current[vid]) markersRef.current[vid].openPopup(); // BUG 8: Guard marker ref
+    } catch (err) {
+      console.warn('[focusVehicle] Route fetch failed:', err);
+    } finally {
+      if (focusRef.current === vid) setLoadRoute(false);
     }
-
-    setLoadRoute(false);
   }
 
   const handleSearchThisArea = () => {
@@ -582,11 +634,20 @@ export default function MapView() {
           pointerEvents: 'none'
         }}>
           <div style={{ display: 'flex', gap: '8px', pointerEvents: 'auto', background: 'rgba(255,255,255,0.9)', padding: '6px 12px', borderRadius: '30px', boxShadow: '0 4px 15px rgba(0,0,0,0.1)', backdropFilter: 'blur(8px)', border: '1px solid var(--gray-200)' }}>
-            {['all','bus','auto','cab'].map(f => (
+            {['all','bus','auto','cab','bike'].map(f => (
               <button key={f} className={`chip ${filter===f?'active':''}`} onClick={() => setFilter(f)} style={{ margin: 0 }}>
                 {f === 'all' ? 'All' : f.charAt(0).toUpperCase()+f.slice(1)}
               </button>
             ))}
+
+            {/* Status Badge: Reflects location status message from Home.jsx logic */}
+            {locStatus.error && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '0 8px', color: 'var(--danger)', fontSize: '10px', fontWeight: 800 }}>
+                <span style={{ fontSize: '12px' }}>{locStatus.label === 'Location denied' ? '📍' : '⌛'}</span>
+                <span style={{ whiteSpace: 'nowrap' }}>{locStatus.label.toUpperCase()}</span>
+              </div>
+            )}
+
             {/* Radius Selector */}
             <div style={{ width: 1, background: 'var(--gray-200)', margin: '0 4px' }} />
             <div style={{ 
@@ -635,8 +696,17 @@ export default function MapView() {
                   <path d="M4 11h16M8 15h.01M16 15h.01M6 19v2M18 19v2"/>
                 </svg>
               </div>
-              <h3>No vehicles active nearby</h3>
-              <p>We're waiting for drivers to come online in your area. Please check back in a moment or expand your search radius.</p>
+              <h3>{locStatus.error ? 'Location Required' : 'No vehicles active nearby'}</h3>
+              <p>
+                {locStatus.error 
+                  ? `We could not determine your current location (${locStatus.label}). Please check your GPS settings to see vehicles in your area.`
+                  : "We're waiting for drivers to come online in your area. Please check back in a moment or expand your search radius."}
+              </p>
+              {locStatus.error && locStatus.label === 'Location denied' && (
+                <button className="btn btn--secondary" style={{ marginTop: 12, padding: '8px 16px', fontSize: 12 }} onClick={() => window.location.reload()}>
+                  🔄 Refresh to retry
+                </button>
+              )}
             </div>
           </div>
         )}

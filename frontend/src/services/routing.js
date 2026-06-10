@@ -30,7 +30,9 @@ export function calcFare(distanceKm, type) {
     cab:  { base: 60, per: 16 },
     bike: { base: 20, per:  8 },
   };
-  const r = rates[type] || rates.auto;
+  // SYNC: Ensure case-insensitive lookup for newly added vehicle types like 'bike'
+  const normalizedType = String(type || '').toLowerCase();
+  const r = rates[normalizedType] || rates.auto;
   const amt = Math.round(r.base + km * r.per);
   return { min: Math.round(amt * 0.9), max: Math.round(amt * 1.1), avg: amt };
 }

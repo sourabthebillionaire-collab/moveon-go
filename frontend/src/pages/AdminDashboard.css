@@ -1,0 +1,60 @@
+.admin-dashboard-page {
+  background: var(--gray-50);
+  min-height: calc(100vh - 60px);
+}
+
+.admin-loading-screen {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  font-weight: 600;
+  color: var(--gray-500);
+}
+
+.admin-error-banner {
+  background: #FEE2E2;
+  color: #B91C1C;
+  padding: 12px 16px;
+  border-radius: 12px;
+  margin-bottom: 16px;
+  font-size: 13px;
+  font-weight: 600;
+  border: 1px solid rgba(185, 28, 28, 0.1);
+}
+
+.admin-stat-item {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.admin-stat-item:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+}
+
+.admin-stat-item:active {
+  transform: scale(0.96);
+}
+
+.admin-stat-item.highlight {
+  background: #FFFBEB;
+  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.1);
+}
+
+/* SOS Emergency Pulse Animation */
+@keyframes pulse {
+  0% {
+    transform: scale(1);
+    filter: drop-shadow(0 0 0px rgba(255,255,255,0));
+  }
+  50% {
+    transform: scale(1.2);
+    filter: drop-shadow(0 0 12px rgba(255,255,255,0.8));
+  }
+  100% {
+    transform: scale(1);
+    filter: drop-shadow(0 0 0px rgba(255,255,255,0));
+  }
+}

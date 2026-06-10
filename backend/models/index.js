@@ -20,12 +20,17 @@ const driverSchema = new mongoose.Schema({
   pinHash:       { type: String, required: true },
   address:       { type: String, trim: true, default: '' },
   licenseNumber: { type: String, trim: true, default: '' },
+  insuranceDoc:  { type: String, trim: true, default: '' },
 
   // ✅ Bus-specific fields — only used when vehicleType === 'bus'
   busName:       { type: String, trim: true, default: '' }, // e.g. "Bhubaneswar Express"
   routeFrom:     { type: String, trim: true, default: '' }, // e.g. "Bhubaneswar"
   routeTo:       { type: String, trim: true, default: '' }, // e.g. "Cuttack"
   routeNumber:   { type: String, trim: true, default: '' }, // e.g. "Route 12"
+
+  // ✅ Occupancy tracking for buses
+  passengers:    { type: Number, default: 0 },
+  capacity:      { type: Number, default: 60 },
 
   isApproved:    { type: Boolean, default: false },
   isActive:      { type: Boolean, default: true },
@@ -43,27 +48,7 @@ const driverSchema = new mongoose.Schema({
   fcmToken: { type: String, trim: true },
 }, { timestamps: true });
 
-const bookingSchema = new mongoose.Schema({
-  userId:        { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-  driverId:      { type: mongoose.Schema.Types.ObjectId, ref: 'Driver' },
-  vehicleType:   { type: String, enum: ['auto', 'cab', 'bike', 'bus'], required: true },
-  pickup:        { type: String, required: true },
-  pickupLat:     { type: Number },
-  pickupLng:     { type: Number },
-  dropoff:       { type: String, required: true },
-  dropoffLat:    { type: Number },
-  dropoffLng:    { type: Number },
-  fare:          { type: String, default: '' },
-  fareAmount:    { type: Number, default: 0 },
-  distance:      { type: String, default: '' },
-  duration:      { type: String, default: '' },
-  payment:       { type: String, default: 'Cash' },
-  status:        { type: String, enum: ['searching', 'accepted', 'started', 'completed', 'cancelled'], default: 'searching' },
-  acceptedAt:    { type: Date },
-  completedAt:   { type: Date },
-  startOTP:      { type: String },
-  paid:          { type: Boolean, default: false }
-}, { timestamps: true });
+const Booking = require('./Booking');
 
 const busRouteSchema = new mongoose.Schema({
   number:    { type: String, required: true, unique: true, uppercase: true },
@@ -78,6 +63,6 @@ const busRouteSchema = new mongoose.Schema({
 module.exports = {
   User:     mongoose.model('User',     userSchema),
   Driver:   mongoose.model('Driver',   driverSchema),
-  Booking:  mongoose.model('Booking',  bookingSchema),
+  Booking,
   BusRoute: mongoose.model('BusRoute', busRouteSchema),
 };

@@ -11,7 +11,7 @@ export default function TrackTrip() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
-  const [trip, setLoadingTrip] = useState(null);
+  const [trip, setTrip] = useState(null); // Corrected: Renamed setLoadingTrip to setTrip
   const [driver, setDriver] = useState(null);
   const [driverLoc, setDriverLoc] = useState(null);
   const [error, setError] = useState(null);
@@ -22,13 +22,14 @@ export default function TrackTrip() {
   const pickupMkrRef = useRef(null);
 
   useEffect(() => {
+    let cleanup = null;
     (async () => {
       try {
         const res = await api.getPublicTrip(id);
-        setLoadingTrip(res.booking);
+        setTrip(res.booking); // Corrected: Changed setLoadingTrip to setTrip
         setDriver(res.booking.driverId);
         initMap(res.booking);
-        setupListeners();
+        cleanup = setupListeners();
       } catch (err) {
         setError(err.message || 'Trip not found');
       } finally {
@@ -38,6 +39,7 @@ export default function TrackTrip() {
 
     return () => {
       if (mapInst.current) mapInst.current.remove();
+      if (cleanup) cleanup();
     };
   }, [id]);
 

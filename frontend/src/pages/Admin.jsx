@@ -15,7 +15,7 @@ function AdminLogin({ onLogin }) {
       const data = await api.adminLogin(password);
       localStorage.setItem('admin_token', data.token);
       onLogin(data.token);
-    } catch { setError('Cannot connect to server.'); }
+    } catch (err) { setError(err.message || 'Incorrect password or server unreachable.'); }
     finally   { setLoading(false); }
   };
 
@@ -104,8 +104,29 @@ function Dashboard({ token, onLogout }) {
       load(tab); // Refresh current view automatically
     };
 
+    // ✅ REAL-TIME STATUS SYNC: Handle duty and connection changes without full reload
+    const handleStatusUpdate = (data) => {
+      const dId = data.id || data.driverId;
+      if (!dId) return;
+      setDrivers(prev => prev.map(d => {
+        if (String(d._id) === String(dId)) {
+          const isOnline = data.status !== 'offline';
+          // Only update if there's an actual change to prevent unnecessary re-renders
+          return d.onDuty !== isOnline ? { ...d, onDuty: isOnline } : d;
+        }
+        return d;
+      }));
+    };
+
     socket.on('admin:driverUpdated', handleDriverUpdate);
-    return () => socket.off('admin:driverUpdated', handleDriverUpdate);
+    socket.on('vehicles:update', handleStatusUpdate);
+    socket.on('driver:offline', (data) => handleStatusUpdate({ ...data, status: 'offline' }));
+
+    return () => {
+      socket.off('admin:driverUpdated', handleDriverUpdate);
+      socket.off('vehicles:update', handleStatusUpdate);
+      socket.off('driver:offline');
+    };
   }, [token, tab]);
 
   useEffect(() => { load(tab); }, [token, tab]);
@@ -245,6 +266,7 @@ function Dashboard({ token, onLogout }) {
                         </div>
                         {d.address && <div className="adc-detail">📍 {d.address}</div>}
                         {d.licenseNumber && <div className="adc-detail">🪪 {d.licenseNumber}</div>}
+                        {d.insuranceDoc && <div className="adc-detail">📄 Insurance: <strong>{d.insuranceDoc}</strong></div>}
                         <div className="adc-detail adc-date">
                           Applied: {new Date(d.createdAt).toLocaleString('en-IN')}
                         </div>
@@ -285,6 +307,7 @@ function Dashboard({ token, onLogout }) {
                         {d.vehicleNumber}
                       </div>
                       <div className="adc-detail">ID: <strong>{d.vehicleId}</strong></div>
+                      {d.insuranceDoc && <div className="adc-detail">📄 Insurance: {d.insuranceDoc}</div>}
                       <div className="adc-detail">
                         <span className={d.onDuty ? 'adc-online' : 'adc-offline'}>
                           {d.onDuty ? '🟢 On Duty' : '⚫ Offline'}

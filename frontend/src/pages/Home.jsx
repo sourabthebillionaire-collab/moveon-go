@@ -14,6 +14,7 @@ const VEHICLE_TYPES = [
   { id: 'bus',  label: 'Bus',  sub: 'Track live buses',   icon: BusIcon,  path: '/buses'          },
   { id: 'auto', label: 'Auto', sub: 'Book auto rickshaw', icon: AutoIcon, path: '/book?type=auto' },
   { id: 'cab',  label: 'Cab',  sub: 'Book a cab',         icon: CabIcon,  path: '/book?type=cab'  },
+  { id: 'bike', label: 'Bike', sub: 'Fastest for solo',   icon: BikeIcon, path: '/book?type=bike' },
 ];
 
 export default function Home() {
@@ -32,8 +33,35 @@ export default function Home() {
 
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
-  // Bug #2 & #3: Display user name if available; will be hydrated from backend via getProfile
-  const firstName = user?.name?.split(' ')[0] || user?.phone?.slice(-4) || 'Guest';
+  // FIX BUG #2 & #3: Use user's first name if available, otherwise generic greeting 'there'
+  const firstName = user?.name ? user.name.trim().split(' ')[0] : 'there';
+
+  // FIX BUG #8: Improve location error messaging
+  const getLocationMessage = () => {
+    const isDenied = locLabel === 'Location denied';
+    const isTimeout = locLabel === 'Location timeout';
+    
+    if (locLoad) {
+      return (
+        <span className="home-search__detecting">
+          <span className="spinner" style={{width:12,height:12,borderWidth:1.5}}/>
+          Getting your location...
+        </span>
+      );
+    }
+    if (locError && isDenied) {
+      return (
+        <span className="home-search__loc home-search__loc--error" title="Enable location in settings">
+          📍 Enable location permission
+        </span>
+      );
+    }
+    return (
+      <span className={`home-search__loc ${locError ? 'home-search__loc--error' : ''}`} title={locLabel}>
+        {locError ? (isTimeout ? '⌛ Location timed out' : locLabel) : (locLabel || 'Current Location')}
+      </span>
+    );
+  };
 
   useEffect(() => {
     (async () => {
@@ -44,7 +72,12 @@ export default function Home() {
         setLocLabel(label);
         setLocError(false);
       } catch (err) {
-        setLocLabel('Location unavailable');
+        let msg = 'Location unavailable';
+        if (err.code === 1) msg = 'Location denied';
+        else if (err.code === 2) msg = 'GPS signal lost';
+        else if (err.code === 3) msg = 'Location timeout';
+        
+        setLocLabel(msg);
         setLocError(true);
         console.warn('[Home] Location error:', err.message);
       } finally {
@@ -94,7 +127,12 @@ export default function Home() {
       setLocLabel(label);
       setLocError(false);
     } catch (err) {
-      setLocLabel('Location unavailable');
+      let msg = 'Location unavailable';
+      if (err.code === 1) msg = 'Location denied';
+      else if (err.code === 2) msg = 'GPS signal lost';
+      else if (err.code === 3) msg = 'Location timeout';
+      
+      setLocLabel(msg);
       setLocError(true);
     } finally { setLocLoad(false); }
   };
@@ -275,3 +313,4 @@ function SearchIcon() { return <svg width="16" height="16" viewBox="0 0 24 24" f
 function BusIcon()    { return <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><rect x="3" y="3" width="18" height="13" rx="2"/><path d="M3 11h18M8 19h8M10 19v-3m4 3v-3"/><circle cx="7" cy="16" r="1" fill="currentColor"/><circle cx="17" cy="16" r="1" fill="currentColor"/></svg>; }
 function AutoIcon()   { return <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><path d="M5 11l1.5-4.5h11L19 11"/><path d="M3 11h18v6H3z"/><circle cx="7" cy="17" r="2"/><circle cx="17" cy="17" r="2"/><path d="M3 13h18"/></svg>; }
 function CabIcon()    { return <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><path d="M5 11l2-5h10l2 5"/><rect x="3" y="11" width="18" height="7" rx="1"/><circle cx="7.5" cy="18" r="1.5"/><circle cx="16.5" cy="18" r="1.5"/><path d="M3 14h18M9 6h6"/></svg>; }
+function BikeIcon()   { return <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><circle cx="7" cy="17" r="2"/><circle cx="17" cy="17" r="2"/><path d="M12 17V7l5 5M5 17h14M9 11l3-3 4 3"/></svg>; }

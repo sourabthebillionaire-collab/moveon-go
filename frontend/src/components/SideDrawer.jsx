@@ -21,6 +21,24 @@ export default function SideDrawer({ open, onClose }) {
   const location          = useLocation();
   const { user, logout }  = useAuth();
 
+  // SYNC: Calculate initials with the same robust logic used in Profile.jsx
+  const initials = (() => {
+    const namePart = user?.name?.trim();
+    if (namePart) {
+      const parts = namePart.split(/\s+/).filter(Boolean);
+      if (parts.length > 0) {
+        return parts.map(p => p[0])
+          .slice(0, 2)
+          .join('')
+          .toUpperCase();
+      }
+    }
+    if (user?.phone && typeof user.phone === 'string' && user.phone.length >= 2) {
+      return user.phone.slice(-2).toUpperCase();
+    }
+    return 'U';
+  })();
+
   const go = (path) => { navigate(path); onClose(); };
 
   return (
@@ -30,7 +48,7 @@ export default function SideDrawer({ open, onClose }) {
 
         {/* User info */}
         <div className="drawer__head">
-          <div className="drawer__avatar">{user?.name?.[0] || user?.phone?.[0] || 'U'}</div>
+          <div className="drawer__avatar">{initials}</div>
           <div className="drawer__user">
             <div className="drawer__name">{user?.name || 'Guest'}</div>
             <div className="drawer__phone">{user?.phone || ''}</div>

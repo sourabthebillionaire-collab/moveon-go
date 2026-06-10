@@ -32,12 +32,52 @@ async function generateVehicleId(vehicleType, vehicleNumber) {
 
 // POST /api/driver/register
 router.post('/register', asyncHandler(async (req, res) => {
-  const { name, phone, email, vehicleType, vehicleNumber, pin, address, licenseNumber, busName, routeFrom, routeTo, routeNumber } = req.body;
+  const { name, phone, email, vehicleType, vehicleNumber, pin, address, licenseNumber, busName, routeFrom, routeTo, routeNumber, insuranceDoc } = req.body;
 
   // Validate required fields
   if (!name || !phone || !vehicleType || !vehicleNumber || !pin) {
     logger.warn('Driver register: missing required fields');
     return res.status(400).json({ message: 'Name, phone, vehicle type, vehicle number, and PIN are required.' });
+  }
+
+  // FIX: Validate phone number (must be 10 digits)
+  const normalizedPhone = String(phone).trim().replace(/[^0-9+]/g, '');
+  const phoneDigits = normalizedPhone.replace(/\D/g, '');
+  if (phoneDigits.length !== 10) {
+    logger.warn(`Driver register: invalid phone: ${phone}`);
+    return res.status(400).json({ message: 'Phone number must be exactly 10 digits.' });
+  }
+
+  // FIX: Validate name (not empty, reasonable length)
+  const trimmedName = String(name).trim();
+  if (trimmedName.length < 2 || trimmedName.length > 100) {
+    logger.warn(`Driver register: invalid name length: ${trimmedName.length}`);
+    return res.status(400).json({ message: 'Name must be between 2 and 100 characters.' });
+  }
+
+  // FIX: Validate email format (if provided)
+  if (email && email.trim()) {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email.trim())) {
+      logger.warn(`Driver register: invalid email: ${email}`);
+      return res.status(400).json({ message: 'Please provide a valid email address.' });
+    }
+  }
+
+  // FIX: Validate vehicle number format
+  const vehicleNum = String(vehicleNumber).trim().toUpperCase();
+  if (vehicleNum.length < 3 || vehicleNum.length > 20 || !/^[A-Z0-9\-]*$/.test(vehicleNum)) {
+    logger.warn(`Driver register: invalid vehicle number: ${vehicleNumber}`);
+    return res.status(400).json({ message: 'Vehicle number must be 3-20 characters (letters, numbers, hyphens only).' });
+  }
+
+  // FIX: Validate license number (if provided)
+  if (licenseNumber && licenseNumber.trim()) {
+    const licenseNum = String(licenseNumber).trim();
+    if (licenseNum.length < 4 || licenseNum.length > 20) {
+      logger.warn(`Driver register: invalid license number: ${licenseNumber}`);
+      return res.status(400).json({ message: 'License number must be between 4 and 20 characters.' });
+    }
   }
 
   const pinStr = String(pin).trim();
@@ -52,9 +92,9 @@ router.post('/register', asyncHandler(async (req, res) => {
   }
 
   // Check if phone already registered
-  const existing = await Driver.findOne({ phone: phone.trim() });
+  const existing = await Driver.findOne({ phone: normalizedPhone });
   if (existing) {
-    logger.warn(`Driver register: phone already registered: ${phone}`);
+    logger.warn(`Driver register: phone already registered: ${normalizedPhone}`);
     return res.status(400).json({ message: 'This phone number is already registered.' });
   }
 
@@ -62,19 +102,20 @@ router.post('/register', asyncHandler(async (req, res) => {
   const pinHash = await bcrypt.hash(pinStr, 10);
 
   // Generate Vehicle ID
-  const vehicleId = await generateVehicleId(vehicleType, vehicleNumber);
+  const vehicleId = await generateVehicleId(vehicleType, vehicleNum);
 
   // Create driver as pending
   const driver = await Driver.create({
     vehicleId,
-    name:          name.trim(),
-    phone:         phone.trim(),
+    name:          trimmedName,
+    phone:         normalizedPhone,
     email:         email?.trim() || '',
     vehicleType,
-    vehicleNumber: vehicleNumber.trim().toUpperCase(),
+    vehicleNumber: vehicleNum,
     pinHash,
     address:       address?.trim() || '',
     licenseNumber: licenseNumber?.trim() || '',
+    insuranceDoc:  insuranceDoc?.trim() || '',
     busName:       vehicleType === 'bus' ? (busName?.trim() || '') : '',
     routeFrom:     vehicleType === 'bus' ? (routeFrom?.trim() || '') : '',
     routeTo:       vehicleType === 'bus' ? (routeTo?.trim() || '') : '',
@@ -84,7 +125,7 @@ router.post('/register', asyncHandler(async (req, res) => {
     status:        'offline',
   });
 
-  logger.info(`Driver registered: ${driver.vehicleId}`, { phone, vehicleType });
+  logger.info(`Driver registered: ${driver.vehicleId}`, { phone: normalizedPhone, vehicleType });
 
   // ✅ REAL-TIME UI UPDATE: Notify admins about the new pending registration
   if (global.io) {

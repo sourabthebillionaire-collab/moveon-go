@@ -165,7 +165,7 @@ export function onDriverOffline(cb) {
 }
 
 // ── Rider: announce presence (triggers vehicle snapshot) ──────
-export function announceRider() {
+export function announceRider(data) {
   const s = getSocket();
-  if (s.connected) s.emit('rider:connected');
+  if (s.connected) s.emit('rider:connected', data);
 }

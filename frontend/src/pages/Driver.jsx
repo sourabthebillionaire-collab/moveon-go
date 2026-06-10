@@ -208,6 +208,7 @@ export default function Driver() {
   const [tripCount,  setTripCount] = useState(0);
   const [earnings,   setEarnings]  = useState(0);
   const [passengers, setPassengers]= useState(0);
+  const [totalPassengers, setTotalPassengers] = useState(0); // FIX: Cumulative count for summary
   const [tripActive, setTripActive]= useState(false);
   const [rideReq,    setRideReq]   = useState(null);
   const [activeRide, setActiveRide]= useState(null);
@@ -238,11 +239,13 @@ export default function Driver() {
   const activeRideRef = useRef(null);
   const passengersRef = useRef(0);
   const driverRef     = useRef(null);
+  const rideReqRef    = useRef(null);
   const onDutyRef     = useRef(onDuty);
 
   useEffect(() => { activeRideRef.current = activeRide; }, [activeRide]);
   useEffect(() => { passengersRef.current = passengers; }, [passengers]);
   useEffect(() => { driverRef.current     = driver;     }, [driver]);
+  useEffect(() => { rideReqRef.current    = rideReq;    }, [rideReq]);
   useEffect(() => { onDutyRef.current     = onDuty;     }, [onDuty]);
 
   // ── Wake Lock API: Prevent background suspension ───────────
@@ -606,6 +609,7 @@ export default function Driver() {
         ...basePayload,
         lat: pos.lat, lng: pos.lng,
         status: activeRideRef.current ? 'busy' : 'active',
+        passengers: passengersRef.current,
       });
 
       // ✅ GPS Signal Check: Warning after 60s of no updates
@@ -726,6 +730,8 @@ export default function Driver() {
       // Suppress new ride requests if driver already has an active ride
       if (currentRide && ['accepted', 'started'].includes(currentRide.status)) return;
 
+      // Race Condition FIX: Don't overwrite if there's already a pending request UI
+      if (rideReqRef.current) return;
       setRideReq(req);
       setSocketDebug(d => [...d.slice(-9), { t: Date.now(), e: 'socket:ride_request', d: req }]);
       speak(
@@ -855,23 +861,25 @@ export default function Driver() {
   // was firing simultaneously and overwriting the driver info with { action }
   // only — that was the race condition causing the 60s wait on the rider side.
   const acceptRide = async () => {
-    if (!rideReq || busy) return; 
+    const req = rideReqRef.current;
+    if (!req || busy) return; 
     setBusy(true); // Prevent double-taps
     try {
-      const res = await api.respondToRide(rideReq.id, 'accept', getDriverToken());
+      const res = await api.respondToRide(req.id, 'accept', getDriverToken());
       const b = res.booking;
       // ✅ Driver accepted the booking, but pickup hasn't happened yet.
       const acceptedRide = { 
-        ...rideReq, 
-        id: rideReq.id, 
+        ...req, 
+        id: req.id, 
         status: 'accepted',
         passengerName: b?.userId?.name,
         passengerPhone: b?.userId?.phone 
       };
       setActiveRide(acceptedRide);
       setActiveDriverRide(acceptedRide);
-      joinBookingRoom(rideReq.id);
-      setRideReq(null);
+      joinBookingRoom(req.id);
+      // FIX: Only clear if this is the request we just processed
+      setRideReq(prev => prev?.id === req?.id ? null : prev);
       setUserLocation(null);
       setTripActive(false);
       speak(
@@ -882,7 +890,7 @@ export default function Driver() {
       );
     } catch (err) {
       setToast('Failed to accept ride. It may have been taken or cancelled.');
-      setRideReq(null); // FIX: Clear stale request if it's no longer valid
+      setRideReq(prev => prev?.id === req?.id ? null : prev); 
     } finally {
       setBusy(false); // FIX: Must reset busy state to allow future actions
     }
@@ -891,15 +899,16 @@ export default function Driver() {
   // ── Decline ride ────────────────────────────────────────────
   // ✅ FIXED: Same fix — HTTP only, no redundant socket emit
   const declineRide = async () => {
-    if (!rideReq || busy) return;
+    const req = rideReqRef.current;
+    if (!req || busy) return;
     setBusy(true);
     try {
-      await api.respondToRide(rideReq.id, 'decline', getDriverToken());
+      await api.respondToRide(req.id, 'decline', getDriverToken());
       // ✅ DO NOT call emitRideResponse here — backend handles socket emit
-      setRideReq(null);
+      setRideReq(prev => prev?.id === req.id ? null : prev);
     } catch {
       setToast('Failed to decline ride. Please try again.');
-      setRideReq(null); // dismiss UI even on error
+      setRideReq(prev => prev?.id === req.id ? null : prev); 
     } finally { setBusy(false); }
   };
 
@@ -924,6 +933,7 @@ export default function Driver() {
       setActiveRide(startedRide);
       setActiveDriverRide(startedRide);
       setPassengers(prev => prev + 1);
+      setTotalPassengers(prev => prev + 1);
       speak(
         lang === 'hi' ? 'यात्रा शुरू।' :
         lang === 'or' ? 'ଯାତ୍ରା ଆରମ୍ଭ।' :
@@ -931,12 +941,11 @@ export default function Driver() {
         lang,
       );
     } catch (err) {
-      setToast('Failed to start ride. Please check your connection and try again.');
       // FIX #14: Handle stale ride (404/409) by clearing local state.
       // "Failed to start the ride" was caused by a stale localStorage ride
       // that no longer exists in DB. Now we clear it and show a clear message
       // so driver can receive new rides instead of being stuck.
-      if (err.status === 404 || err.status === 409 || err.status === 403) {
+      if (err.status === 404 || err.status === 409 || err.status === 403 || err.status === 410) {
         clearActiveDriverRide();
         setActiveRide(null);
         setTripActive(false);
@@ -944,6 +953,7 @@ export default function Driver() {
         setPassengers(0);
         const msg = err.status === 403 
           ? 'This ride is not assigned to you.' 
+          : err.status === 410 ? 'Ride expired due to delay. It has been cancelled.'
           : err.status === 409 ? 'This ride has already been started or cancelled.' :
           'This ride is no longer available — the passenger may have cancelled.';
         setToast(msg);
@@ -1437,7 +1447,7 @@ export default function Driver() {
               {[
                 {label: t.trips,      val: tripCount},
                 {label: t.earned,     val: `₹${earnings}`},
-                {label: t.passengers, val: passengers},
+                {label: t.passengers, val: driver?.vehicleType === 'bus' ? passengers : totalPassengers},
               ].map((r,i,arr) => (
                 <div key={i}>
                   <div className="drv-sum-row">

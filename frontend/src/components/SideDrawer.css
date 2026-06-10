@@ -147,3 +147,31 @@
   background: rgba(0, 0, 0, 0.45);
   z-index: 299;
 }
+
+/* ── Mobile Optimization ───────────────────────────── */
+@media (max-width: 480px) {
+  .drawer {
+    width: 85vw;        /* Wider on very small screens for better usability */
+    max-width: 280px;   /* Reduced cap for small screens */
+  }
+}
+
+@media (max-width: 320px) {
+  .drawer {
+    width: 90vw;        /* Nearly full width on extremely small screens */
+  }
+  
+  .drawer__item {
+    padding: 10px 16px;
+    font-size: 12px;
+    min-height: 44px;
+  }
+}
+
+@media (min-width: 1024px) {
+  /* On larger screens, keep the drawer from being too wide */
+  .drawer {
+    width: 280px;
+    max-width: 280px;
+  }
+}

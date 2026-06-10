@@ -12,7 +12,7 @@ router.get('/routes', asyncHandler(async (req, res) => {
         onDuty:   true,
         isActive: true,
         'location.updatedAt': { $gte: new Date(Date.now() - 60000) },
-      }).select('location status vehicleNumber passengers');
+      }).select('location status vehicleNumber passengers capacity');
 
       // FIX: Deterministic ETA instead of Math.random()
       // Use the route ID to create a stable "base" time that doesn't jump on refresh
@@ -31,7 +31,7 @@ router.get('/routes', asyncHandler(async (req, res) => {
         liveCount: liveDrivers.length,
         eta:       liveDrivers.length > 0 ? `${mockEta} min` : '--',
         // Show the occupancy of the nearest bus
-        seats:     liveDrivers.length > 0 ? Math.max(0, 60 - (liveDrivers[0].passengers || 0)) : null
+        seats:     liveDrivers.length > 0 ? Math.max(0, (liveDrivers[0].capacity || 60) - (liveDrivers[0].passengers || 0)) : null
       };
     }));
 

@@ -23,14 +23,13 @@
 
 .header__left,
 .header__right {
-  width: 44px;
+  flex: 1;
   display: flex;
   align-items: center;
-  justify-content: center;
 }
 .header__right { justify-content: flex-end; }
 .header__center {
-  flex: 1;
+  flex: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -46,7 +45,6 @@
   transition: background 0.15s;
   -webkit-tap-highlight-color: transparent;
   font-size: 18px;
-  min-height: 44px;
 }
 .header__icon-btn:hover   { background: #F5F7FA; }
 .header__icon-btn:active  { background: #E5E9EF; transform: scale(0.95); }

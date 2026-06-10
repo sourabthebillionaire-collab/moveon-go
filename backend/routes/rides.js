@@ -25,7 +25,7 @@ router.post('/:rideId/respond', protectDriver, asyncHandler(async (req, res) => 
 
       // FIX: Mark driver as 'busy' and update global tracking state
       // Syncs logic with bookings.js to prevent driver assignment conflicts.
-      await Driver.updateOne({ _id: req.driver._id }, { status: 'busy' });
+      await Driver.updateOne({ _id: req.driver._id }, { status: 'busy', onDuty: true });
 
       const driverPayload = {
         name:          req.driver.name,
@@ -72,11 +72,47 @@ router.post('/:rideId/respond', protectDriver, asyncHandler(async (req, res) => 
 router.put('/:rideId/start', protectDriver, asyncHandler(async (req, res) => {
   const rideId = req.params.rideId;
 
-  const check = await Booking.findById(rideId).select('status driverId');
+  const check = await Booking.findById(rideId).select('status driverId acceptedAt');
   if (!check) return res.status(404).json({ message: 'Booking not found.' });
 
   // LOGIC SIMPLIFICATION: We removed the OTP check here to prevent 
   // synchronization issues at busy Indian bus stands/auto stands.
+
+  // STALE CHECK: If a driver tries to start a ride after a long delay (e.g. 30 mins),
+  // block it as the rider likely found another way or the ride is considered abandoned.
+  if (check.status === 'accepted' && check.acceptedAt) {
+    const elapsed = Date.now() - new Date(check.acceptedAt).getTime();
+    if (elapsed > 1800000) { // 30 minutes
+      await Booking.updateOne({ _id: rideId }, { status: 'cancelled' });
+      await Driver.updateOne({ _id: req.driver._id }, { status: 'active', onDuty: true });
+
+      // ✅ SYNC MEMORY MAP: Mark driver as active for other riders to see on map
+      const currentPos = global.io?.activeVehiclePositions?.get(String(req.driver._id));
+      if (currentPos) {
+        currentPos.status = 'active';
+        global.io.emit('vehicles:update', currentPos);
+      }
+
+      if (global.io) {
+        const bIdStr = String(rideId);
+        const dIdStr = String(req.driver._id);
+        const room = `booking:${bIdStr}`;
+
+        // Notify rider that the ride has expired
+        global.io.to(room).emit(room, {
+          action: 'cancelled',
+          message: 'Ride expired due to delay in starting pickup.',
+          bookingId: bIdStr
+        });
+        global.io.in(room).socketsLeave(room);
+        global.io.activeBookings?.delete(bIdStr);
+        global.io.driverToBooking?.delete(dIdStr);
+        global.io.arrivedNotified?.delete(bIdStr);
+      }
+
+      return res.status(410).json({ message: 'Ride expired due to delay in starting pickup.' });
+    }
+  }
 
   const booking = await Booking.findOneAndUpdate(
     { _id: rideId, driverId: req.driver._id, status: 'accepted' },
@@ -124,7 +160,7 @@ router.put('/:rideId/complete', protectDriver, asyncHandler(async (req, res) => 
     return res.status(404).json({ message: 'Ride cannot be completed. It may not be started yet.' });
   }
 
-  await Driver.updateOne({ _id: req.driver._id }, { $inc: { totalTrips: 1 }, status: 'active' });
+  await Driver.updateOne({ _id: req.driver._id }, { $inc: { totalTrips: 1 }, status: 'active', onDuty: true });
 
   // ✅ SYNC MEMORY MAP: Mark driver as active immediately
   const currentPos = global.io?.activeVehiclePositions?.get(String(req.driver._id));
@@ -163,7 +199,7 @@ router.put('/:rideId/cancel', protectDriver, asyncHandler(async (req, res) => {
     return res.status(404).json({ message: 'Ride cannot be cancelled. It may not be assigned to you.' });
   }
 
-  await Driver.updateOne({ _id: req.driver._id }, { status: 'active' });
+  await Driver.updateOne({ _id: req.driver._id }, { status: 'active', onDuty: true });
 
   if (global.io) {
     const payload = { action: 'cancelled', bookingId: String(rideId), driverId: String(req.driver._id) };

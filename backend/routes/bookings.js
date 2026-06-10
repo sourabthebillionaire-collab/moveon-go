@@ -30,7 +30,13 @@ router.post('/', protect, bookingLimiter, asyncHandler(async (req, res) => {
     return res.status(400).json({ message: 'Invalid pickup or drop-off coordinates.' });
   }
 
-  const amount = fareAmount; // fareAmount is now required by schema, no default here
+  // FIX: Validate fareAmount is a positive number to prevent billing or logic errors.
+  // Even though the frontend casts this, the API must be defensive against direct calls.
+  const amount = Number(fareAmount);
+  if (isNaN(amount) || amount <= 0) {
+    logger.warn('Booking creation: invalid fare amount', { userId: req.user._id, fareAmount });
+    return res.status(400).json({ message: 'A valid positive fare amount is required.' });
+  }
   
   // Ola/Uber Style: Generate a 4-digit OTP for the passenger to give to the driver
   // This ensures the ride only starts when the passenger is physically present.
@@ -65,6 +71,7 @@ router.post('/', protect, bookingLimiter, asyncHandler(async (req, res) => {
       pickupLng:  pickupCoords.lng,
       dropoffLat: dropoffCoords.lat,
       dropoffLng: dropoffCoords.lng,
+      eta:        duration, // FIX: Matches rideReq.eta expectation in Driver.jsx
       payment:    booking.payment,
     });
   }
@@ -92,10 +99,35 @@ router.get('/', protect, asyncHandler(async (req, res) => {
 
 // GET /api/bookings/active — rider's active booking
 router.get('/active', protect, asyncHandler(async (req, res) => {
-  const booking = await Booking.findOne({
+  let booking = await Booking.findOne({
     userId: req.user._id,
     status: { $in: ['searching', 'accepted', 'started'] },
   }).populate('driverId', 'name phone vehicleNumber rating vehicleType');
+
+  // SERVER-SIDE TIMEOUT MIRROR: If a 'searching' booking is older than 75s, 
+  // auto-cancel it to sync with the frontend 60s timeout and free up drivers.
+  if (booking && booking.status === 'searching') {
+    const elapsed = Date.now() - new Date(booking.createdAt).getTime();
+    if (elapsed > 75000) { // 75s buffer over frontend 60s
+      await Booking.updateOne({ _id: booking._id }, { status: 'cancelled' });
+      if (global.io) {
+        global.io.emit('ride:cancelled', { bookingId: String(booking._id), id: String(booking._id) });
+      }
+      logger.info(`Booking ${booking._id} auto-cancelled (Query Timeout Check)`);
+      booking = null;
+    }
+  } else if (booking && booking.status === 'accepted' && booking.acceptedAt) {
+    // STALE ACCEPTED CHECK: 20-minute threshold
+    const elapsed = Date.now() - new Date(booking.acceptedAt).getTime();
+    if (elapsed > 1200000) {
+      await Booking.updateOne({ _id: booking._id }, { status: 'cancelled' });
+      if (booking.driverId) {
+        await Driver.updateOne({ _id: booking.driverId._id }, { status: 'active', onDuty: true });
+      }
+      logger.info(`Booking ${booking._id} auto-cancelled (Accepted Stale Check)`);
+      booking = null;
+    }
+  }
 
   logger.info(`Active booking query`, { userId: req.user._id, found: !!booking });
   res.json({ booking: booking || null });
@@ -105,11 +137,28 @@ router.get('/active', protect, asyncHandler(async (req, res) => {
 // FIX: Used by Driver.jsx session restore to verify localStorage ride is
 // still valid. Without this, stale rides cause "Failed to start the ride".
 router.get('/driver-active', protectDriver, asyncHandler(async (req, res) => {
-  const booking = await Booking.findOne({
+  let booking = await Booking.findOne({
     driverId: req.driver._id,
     status:   { $in: ['accepted', 'started'] },
   }).populate('userId', 'name phone')
     .select('_id userId status pickup dropoff fare fareAmount distance duration pickupLat pickupLng dropoffLat dropoffLng vehicleType payment').lean();
+
+  // STALE ACCEPTED CHECK: If an 'accepted' booking is older than 20 mins, 
+  // auto-cancel it to sync with background cleanup and free the driver.
+  if (booking && booking.status === 'accepted' && booking.acceptedAt) {
+    const elapsed = Date.now() - new Date(booking.acceptedAt).getTime();
+    if (elapsed > 1200000) { // 20 mins
+      await Booking.updateOne({ _id: booking._id }, { status: 'cancelled' });
+      await Driver.updateOne({ _id: req.driver._id }, { status: 'active', onDuty: true });
+      
+      if (global.io) {
+        const bIdStr = String(booking._id);
+        global.io.to(`booking:${bIdStr}`).emit(`booking:${bIdStr}`, { action: 'cancelled', message: 'Ride cancelled due to inactivity.' });
+      }
+      logger.info(`Booking ${booking._id} auto-cancelled (Driver Active Check)`);
+      booking = null;
+    }
+  }
 
   logger.info(`Driver active booking query`, { driverId: req.driver._id, found: !!booking });
   res.json({ booking: booking || null });
@@ -165,7 +214,7 @@ router.delete('/:id', protect, asyncHandler(async (req, res) => {
     global.io.in(`booking:${bId}`).socketsLeave(`booking:${bId}`);
     if (booking.driverId) {
       // FIX: Ensure driver is set back to 'active' status so they can receive new rides.
-      await Driver.updateOne({ _id: booking.driverId }, { status: 'active' });
+      await Driver.updateOne({ _id: booking.driverId }, { status: 'active', onDuty: true });
 
       global.io.to(`driver:${String(booking.driverId)}`).emit('booking:cancelled', {
         bookingId: String(booking._id), action: 'cancelled',

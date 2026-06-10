@@ -110,8 +110,12 @@ export const api = {
     get('/config'),
 
   // ── Bookings ──────────────────────────────────────────────────
-  createBooking: (data, token) =>
-    post('/bookings', data, token),
+  createBooking: (data, token) => {
+    // SYNC: Ensure fareAmount is numeric to match the updated Booking schema.
+    // This prevents validation errors if the UI state contains a string representation.
+    const payload = { ...data, fareAmount: Number(data.fareAmount || 0) };
+    return post('/bookings', payload, token);
+  },
 
   getBookings: (token) =>
     get('/bookings', token),
@@ -151,11 +155,11 @@ export const api = {
   adminLogin: (password) =>
     post('/admin/login', { password }),
 
-  getAdminStats: (token) =>
-    get('/admin/stats', token),
+  getAdminStats: (token, type = 'all') =>
+    get(`/admin/stats?type=${type}`, token),
 
-  getAdminDrivers: (status = 'all', token) =>
-    get(`/admin/drivers?status=${status}`, token),
+  getAdminDrivers: (status = 'all', token, type = 'all', q = '') =>
+    get(`/admin/drivers?status=${status}&type=${type}&q=${q}`, token),
 
   approveDriver: (driverId, token) =>
     put(`/admin/drivers/${driverId}/approve`, {}, token),

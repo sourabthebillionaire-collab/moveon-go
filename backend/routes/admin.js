@@ -14,10 +14,15 @@
 const router = require('express').Router();
 const jwt    = require('jsonwebtoken');
 const { Driver, User, Booking, BusRoute } = require('../models');
+const logger = require('../utils/logger');
 const { asyncHandler } = require('../utils/errorHandler');
 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'pujasarkar';
 const JWT_SECRET     = process.env.JWT_SECRET;
+
+// ── Statistics Cache ──────────────────────────────────────────
+const statsCache = new Map();
+const CACHE_TTL = 30000; // 30 seconds in milliseconds
 
 // ── Admin auth middleware ─────────────────────────────────────
 function adminAuth(req, res, next) {
@@ -49,6 +54,17 @@ router.post('/login', (req, res) => {
 
 // GET /api/admin/stats
 router.get('/stats', adminAuth, asyncHandler(async (req, res) => {
+    const { type } = req.query;
+    const cacheKey = type || 'all';
+    const now = Date.now();
+
+    // Check if valid cache exists for this specific filter type
+    if (statsCache.has(cacheKey) && (now - statsCache.get(cacheKey).ts < CACHE_TTL)) {
+      return res.json(statsCache.get(cacheKey).data);
+    }
+
+    const filter = type && type !== 'all' ? { vehicleType: type } : {};
+
     const [
       totalUsers,
       totalDrivers,
@@ -57,17 +73,19 @@ router.get('/stats', adminAuth, asyncHandler(async (req, res) => {
       totalBookings,
       completedBookings,
       todayBookings,
+      sosAlerts,
     ] = await Promise.all([
       User.countDocuments(),
-      Driver.countDocuments({ isActive: true }),
-      Driver.countDocuments({ isApproved: false, isActive: true }),
-      Driver.countDocuments({ onDuty: true, isActive: true }),
-      Booking.countDocuments({ status: { $ne: 'cancelled' } }), // Exclude cancelled bookings from total
-      Booking.countDocuments({ status: 'completed' }),
-      Booking.countDocuments({ createdAt: { $gte: new Date(new Date().setUTCHours(0,0,0,0)) } }),
+      Driver.countDocuments({ ...filter, isActive: true }),
+      Driver.countDocuments({ ...filter, isApproved: false, isActive: true }),
+      Driver.countDocuments({ ...filter, onDuty: true, isActive: true }),
+      Booking.countDocuments({ ...filter, status: { $ne: 'cancelled' } }), 
+      Booking.countDocuments({ ...filter, status: 'completed' }),
+      Booking.countDocuments({ ...filter, createdAt: { $gte: new Date(new Date().setUTCHours(0,0,0,0)) } }),
+      Driver.countDocuments({ ...filter, status: 'SOS', isActive: true }),
     ]);
 
-    res.json({
+    const statsData = {
       totalUsers,
       totalDrivers,
       pendingDrivers,
@@ -75,15 +93,37 @@ router.get('/stats', adminAuth, asyncHandler(async (req, res) => {
       totalBookings,
       completedBookings,
       todayBookings,
-    });
+      sosAlerts,
+    };
+
+    // Update cache before responding
+    statsCache.set(cacheKey, { ts: now, data: statsData });
+
+    res.json(statsData);
 }));
 
-// GET /api/admin/drivers?status=pending|approved|all
+// GET /api/admin/drivers?status=pending|approved|sos|all&type=bus|auto|cab&id=ID
 router.get('/drivers', adminAuth, asyncHandler(async (req, res) => {
-    const { status } = req.query;
+    const { status, type, q, id } = req.query;
     let query = { isActive: true };
-    if (status === 'pending')  query.isApproved = false;
-    if (status === 'approved') query.isApproved = true;
+
+    if (id) {
+      query._id = id;
+    } else {
+      if (status === 'pending')  query.isApproved = false;
+      if (status === 'approved') query.isApproved = true;
+      if (status === 'sos')      query.status = 'SOS';
+      if (type && type !== 'all') query.vehicleType = type;
+    }
+
+    if (q) {
+      const regex = new RegExp(q, 'i');
+      query.$or = [
+        { name: regex },
+        { vehicleNumber: regex },
+        { vehicleId: regex }
+      ];
+    }
 
     const drivers = await Driver.find(query)
       .select('-pinHash')
@@ -102,6 +142,8 @@ router.put('/drivers/:id/approve', adminAuth, asyncHandler(async (req, res) => {
 
     if (!driver) return res.status(404).json({ message: 'Driver not found.' });
 
+    statsCache.clear(); // FIX: Invalidate statistics cache for immediate UI feedback
+
     if (global.io) {
       // ✅ Targeted notification: only notify the specific vehicle room
       const vRoom = `vehicle:${driver.vehicleId}`;
@@ -119,11 +161,13 @@ router.put('/drivers/:id/reject', adminAuth, asyncHandler(async (req, res) => {
     const { reason } = req.body;
     const driver = await Driver.findByIdAndUpdate(
       req.params.id,
-      { isActive: false },
+      { isActive: false, onDuty: false, status: 'offline' }, // FIX: Ensure status is synced in DB
       { new: true }
     ).select('-pinHash');
 
     if (!driver) return res.status(404).json({ message: 'Driver not found.' });
+
+    statsCache.clear(); // FIX: Invalidate statistics cache for immediate UI feedback
 
     // ✅ Kick driver off active session immediately
     if (global.io) {
@@ -145,6 +189,11 @@ router.put('/drivers/:id/reject', adminAuth, asyncHandler(async (req, res) => {
               bookingId
             });
             global.io.in(room).socketsLeave(room);
+            
+            // FIX: Ensure arrived notifications are also cleared
+            if (global.io.arrivedNotified) {
+              global.io.arrivedNotified.delete(bookingId);
+            }
             global.io.activeBookings.delete(bookingId);
             global.io.driverToBooking.delete(String(req.params.id));
             logger.info(`Admin rejected driver ${req.params.id} — aborted active booking ${bookingId}`);
@@ -154,10 +203,51 @@ router.put('/drivers/:id/reject', adminAuth, asyncHandler(async (req, res) => {
         global.io.to(driverRoom).emit('driver:kicked', {
           reason: reason || 'Your account has been rejected by admin.',
         });
+
+        // ✅ REAL-TIME SYNC: Remove from map and notify all riders immediately
+        global.io.activeVehiclePositions?.delete(String(req.params.id));
+        global.io.emit('driver:offline', { driverId: req.params.id });
+        
         global.io.in(driverRoom).socketsLeave(driverRoom);
       }
 
     res.json({ message: `Driver ${driver.name} rejected.`, driver });
+}));
+
+// PUT /api/admin/drivers/:id/clear-sos
+// Allows admins to manually resolve an emergency status
+router.put('/drivers/:id/clear-sos', adminAuth, asyncHandler(async (req, res) => {
+    const driverId = req.params.id;
+    // Determine restorative status: busy if mid-trip, otherwise active
+    const bookingId = global.io?.driverToBooking?.get(String(driverId));
+    const nextStatus = bookingId ? 'busy' : 'active';
+
+    const driver = await Driver.findByIdAndUpdate(
+      driverId,
+      { status: nextStatus },
+      { new: true }
+    ).select('-pinHash');
+
+    if (!driver) return res.status(404).json({ message: 'Driver not found.' });
+
+    logger.info(`Admin cleared SOS for driver ${driverId}. Status restored to ${nextStatus}`);
+
+    statsCache.clear(); // FIX: Invalidate statistics cache for immediate UI feedback
+
+    if (global.io) {
+      // Notify admins to refresh stats and dashboard alerts
+      global.io.to('admins').emit('admin:driverUpdated', { driverId, action: 'sos_cleared' });
+
+      // Update the real-time map entry
+      const currentPos = global.io.activeVehiclePositions.get(String(driverId));
+      if (currentPos) {
+        currentPos.status = nextStatus;
+        currentPos.ts = Date.now();
+        global.io.emit('vehicles:update', currentPos);
+      }
+    }
+
+    res.json({ message: `SOS status cleared for ${driver.name}.`, driver });
 }));
 
 // DELETE /api/admin/drivers/:id  ✅ NOW KICKS DRIVER INSTANTLY
@@ -165,11 +255,17 @@ router.delete('/drivers/:id', adminAuth, asyncHandler(async (req, res) => {
     const driver = await Driver.findByIdAndDelete(req.params.id);
     if (!driver) return res.status(404).json({ message: 'Driver not found.' });
 
+    statsCache.clear(); // FIX: Invalidate statistics cache for immediate UI feedback
+
     // ✅ Emit kick event to that driver's socket room instantly
     // Driver.jsx listens for this and clears session + redirects to login
     if (global.io) {
       const driverRoom = `driver:${req.params.id}`;
-      // FIX: Notify rider if driver was on a trip
+
+      // ✅ REAL-TIME SYNC: Remove from map and notify all riders immediately
+      global.io.activeVehiclePositions?.delete(String(req.params.id));
+      global.io.emit('driver:offline', { driverId: req.params.id });
+
       if (global.io.driverToBooking) {
         const bookingId = global.io.driverToBooking.get(String(req.params.id));
         if (bookingId) {
@@ -180,6 +276,10 @@ router.delete('/drivers/:id', adminAuth, asyncHandler(async (req, res) => {
               bookingId
             });
             global.io.in(room).socketsLeave(room);
+            
+            if (global.io.arrivedNotified) {
+              global.io.arrivedNotified.delete(bookingId);
+            }
             global.io.activeBookings.delete(bookingId);
             global.io.driverToBooking.delete(String(req.params.id));
             logger.info(`Admin deleted driver ${req.params.id} — aborted active booking ${bookingId}`);

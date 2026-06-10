@@ -125,6 +125,7 @@ const playTada = () => {
 const TYPES = [
   { id: 'auto', label: 'Auto Rickshaw', cap: 'Up to 3 passengers', eta: '3–6 min', emoji: '🛺' },
   { id: 'cab',  label: 'Cab',           cap: 'Up to 4 passengers', eta: '5–8 min', emoji: '🚕' },
+  { id: 'bike', label: 'Bike',          cap: '1 passenger only',   eta: '2–4 min', emoji: '🏍️' },
 ];
 
 const TIMEOUT_SECONDS = 60;
@@ -139,18 +140,20 @@ export default function BookRide() {
   const [dropoff,       setDropoff]       = useState('');
   const [dropoffCoords, setDropoffCoords] = useState(null);
   const [route,         setRoute]         = useState(null);
-  const [fare,          setFare]          = useState(null);
+  const [fare,          setFare]          = useState(null); // Corrected: Renamed setLoadingTrip to setFare
   const [routeLoading,  setRouteLoading]  = useState(false);
   const [payment,       setPayment]       = useState('Cash');
   const [booking,       setBooking]       = useState(null);
   const [bookingId,     setBookingId]     = useState(null);
+  const [pickupLoading, setPickupLoading] = useState(true); // New state for pickup loading
+  const [pickupError,   setPickupError]   = useState(false); // New state for pickup error
   const [driver,        setDriver]        = useState(null);
   const [otp,           setOtp]           = useState(null);
   const [driverLocation, setDriverLocation] = useState(null);
   const [socketDebug, setSocketDebug] = useState([]);
   const [countdown,     setCountdown]     = useState(TIMEOUT_SECONDS);
   const [rideStatus,    setRideStatus]    = useState(null);
-  const [showQr,       setShowQr]       = useState(false);
+  const [showQr,        setShowQr]        = useState(false);
   const [driverOffline, setDriverOffline] = useState(false);
   const [isBoarded,    setIsBoarded]    = useState(false);
   const [toast,         setToast]       = useState(null);
@@ -176,11 +179,16 @@ export default function BookRide() {
 
   useEffect(() => {
     (async () => {
+      setPickupLoading(true);
+      setPickupError(false);
       try {
         const pos = await getCurrentPosition();
         setPickupCoords(pos);
-        setPickup(await reverseGeocode(pos.lat, pos.lng));
-      } catch { setPickup('Current Location'); }
+        const resolvedAddress = await reverseGeocode(pos.lat, pos.lng);
+        setPickup(resolvedAddress);
+        if (resolvedAddress === 'Current Location') setPickupError(true); // Indicate if reverse geocoding failed to get specific address
+      } catch { setPickup('Current Location'); setPickupError(true); } // Handle GPS permission/failure
+      finally { setPickupLoading(false); }
     })();
   }, []);
 
@@ -191,7 +199,7 @@ export default function BookRide() {
         const result = await api.getActiveBooking(getToken());
         const b = result?.booking;
         if (!b) {
-          if (bookingId) handleBookingTermination(null); 
+          handleBookingTermination(null); // Ensure stale local storage is cleared if no server booking exists
           return;
         }
 
@@ -207,7 +215,7 @@ export default function BookRide() {
         setBookingId(b._id || b.id);
         setBooking(isSearching ? 'searching' : 'found');
         setRideStatus(b.status);
-
+        
         if (b.startOTP) setOtp(b.startOTP);
         if (b.driverId && !isSearching) {
           const d = {
@@ -242,12 +250,21 @@ export default function BookRide() {
     setBooking(finalStatus);
     setRideStatus(null);
     setIsBoarded(false);
-    setBookingId(null);
+    // FIX: Preserve bookingId during completion so the user can submit feedback/rating
+    if (finalStatus !== 'completed') setBookingId(null);
     setDriver(null);
     setDriverLocation(null);
     setRoute(null);
     setFare(null);
   };
+
+  // ✅ GLOBAL CLEANUP: Ensure no dangling intervals or GPS watches on unmount
+  useEffect(() => {
+    return () => {
+      stopPolling();
+      if (riderLocationWatchRef.current) riderLocationWatchRef.current();
+    };
+  }, []);
 
   const handleFeedbackSubmit = async () => {
     if (rating === 0) { showToast('Please select a star rating.'); return; }
@@ -600,14 +617,14 @@ export default function BookRide() {
   // ── Timeout ──────────────────────────────────────────────────
   if (booking === 'timeout') return (
     <div className="app">
-      <Header title="No Driver Found" showBack onBack={() => setBooking(null)}/>
+      <Header title="No Driver Found" showBack onBack={() => { setBookingId(null); setBooking(null); }}/>
       <div className="page" style={{padding:'40px 24px',textAlign:'center'}}>
         <div style={{fontSize:56,marginBottom:16}}>😔</div>
         <h2 style={{fontSize:18,fontWeight:700,marginBottom:8}}>No drivers available</h2>
         <p style={{color:'var(--gray-500)',fontSize:14,marginBottom:32}}>
           No {type} drivers available near you right now. Please try again in a few minutes.
         </p>
-        <button className="btn btn--primary btn--full btn--lg" onClick={() => setBooking(null)}>Try Again</button>
+        <button className="btn btn--primary btn--full btn--lg" onClick={() => { setBookingId(null); setBooking(null); }}>Try Again</button>
       </div>
       <BottomNav/>
     </div>
@@ -615,14 +632,14 @@ export default function BookRide() {
 
   if (booking === 'cancelled') return (
     <div className="app">
-      <Header title="Ride Cancelled" showBack onBack={() => setBooking(null)}/>
+      <Header title="Ride Cancelled" showBack onBack={() => { setBookingId(null); setBooking(null); }}/>
       <div className="page" style={{padding:'40px 24px',textAlign:'center'}}>
         <div style={{fontSize:56,marginBottom:16}}>🚫</div>
         <h2 style={{fontSize:18,fontWeight:700,marginBottom:8}}>Your ride was cancelled</h2>
         <p style={{color:'var(--gray-500)',fontSize:14,marginBottom:32}}>
           The driver cancelled the ride. You can search again or choose another vehicle.
         </p>
-        <button className="btn btn--primary btn--full btn--lg" onClick={() => setBooking(null)}>Book again</button>
+        <button className="btn btn--primary btn--full btn--lg" onClick={() => { setBookingId(null); setBooking(null); }}>Book again</button>
       </div>
       <BottomNav/>
     </div>
@@ -630,7 +647,7 @@ export default function BookRide() {
 
   if (booking === 'completed') return (
     <div className="app">
-      <Header title="Trip Completed" showBack onBack={() => { setBooking(null); setRating(0); setFeedback(''); setFeedbackSent(false); }}/>
+      <Header title="Trip Completed" showBack onBack={() => { setBookingId(null); setBooking(null); setRating(0); setFeedback(''); setFeedbackSent(false); }}/>
       <div className="page" style={{padding:'40px 24px',textAlign:'center'}}>
         {feedbackSent ? (
           <div className="slide-up">
@@ -681,7 +698,7 @@ export default function BookRide() {
             )}
           </div>
         )}
-        <button className="btn btn--primary btn--full btn--lg" onClick={() => { setBooking(null); setRating(0); setFeedback(''); setFeedbackSent(false); }}>Book again</button>
+        <button className="btn btn--primary btn--full btn--lg" onClick={() => { setBookingId(null); setBooking(null); setRating(0); setFeedback(''); setFeedbackSent(false); }}>Book again</button>
       </div>
       <BottomNav/>
     </div>
@@ -725,13 +742,14 @@ export default function BookRide() {
           </div>
           
           <div className="br-driver-eta">
-            {driverLocation && pickupCoords ? (
+            {driverLocation?.lat && driverLocation?.lng && pickupCoords ? (
               (() => {
                 const R = 6371;
                 const dLat = (pickupCoords.lat - driverLocation.lat) * Math.PI / 180;
                 const dLon = (pickupCoords.lng - driverLocation.lng) * Math.PI / 180;
                 const a = Math.sin(dLat/2)**2 + Math.cos(driverLocation.lat*Math.PI/180) * Math.cos(pickupCoords.lat*Math.PI/180) * Math.sin(dLon/2)**2;
-                const distKm = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+                // Clamp value to [0, 1] to prevent NaN from precision errors on antipodal points
+                const distKm = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(Math.max(0, 1 - a)));
                 const mins = Math.max(1, Math.ceil(distKm * 3)); // Assume ~20km/h
                 return <>Arriving in <span className="highlight">{mins} min{mins > 1 ? 's' : ''} ({distKm.toFixed(1)} km)</span></>;
               })()
@@ -869,13 +887,24 @@ export default function BookRide() {
         <p className="section-label" style={{padding:'0 0 8px'}}>Route Details</p>
         <div className="card" style={{padding:14,marginBottom:14,overflow:'visible', borderRadius:'24px', border:'1px solid rgba(0,0,0,0.05)'}}>
           <PlaceSearch placeholder="Pickup location" value={pickup}
-            onSelect={p => { if(p){setPickupCoords(p);setPickup(p.name);}else setPickupCoords(null); }}
+            onSelect={p => { if(p){setPickupCoords(p);setPickup(p.name);setPickupError(false);}else {setPickupCoords(null);setPickup('');} }}
             dotColor="var(--green-600)"/>
           <div style={{height:1,background:'var(--gray-200)',margin:'10px 0 10px 20px'}}/>
           <PlaceSearch placeholder="Drop location" value={dropoff}
             onSelect={p => { if(p){setDropoffCoords(p);setDropoff(p.name);}else setDropoffCoords(null); }}
             dotColor="var(--danger)"/>
         </div>
+        {pickupLoading && (
+          <div style={{display:'flex',alignItems:'center',gap:10,padding:'8px 0',color:'var(--gray-400)',fontSize:13}}>
+            <span className="spinner" style={{width:14,height:14,borderWidth:1.5}}/> Detecting current location...
+          </div>
+        )}
+        {pickupError && !pickupLoading && (
+          <div style={{display:'flex',alignItems:'center',gap:10,padding:'8px 0',color:'var(--danger)',fontSize:13}}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+            Could not get precise pickup location. Please type it in or enable GPS.
+          </div>
+        )}
 
         {routeLoading && (
           <div style={{display:'flex',alignItems:'center',gap:10,padding:'8px 0',color:'var(--gray-400)',fontSize:13}}>
@@ -927,8 +956,8 @@ export default function BookRide() {
             disabled={!pickup||!dropoff||routeLoading}>
             {!dropoff          ? 'Enter Drop Location'
               : routeLoading      ? 'Calculating...'
-              : payment === 'Cash'? `Book ${TYPES.find(v=>v.id===type)?.label} · ${fare?.display||'Get Fare'}`
-              :                     `Pay Online · ${fare?.display||'Get Fare'}`
+              : payment === 'Cash'? `Book ${TYPES.find(v=>v.id===type)?.label} · ${fare?.display || (fare?.amount ? '₹' + fare.amount : 'Get Fare')}`
+              :                     `Pay Online · ${fare?.display || (fare?.amount ? '₹' + fare.amount : 'Get Fare')}`
             }
           </button>
         </div>

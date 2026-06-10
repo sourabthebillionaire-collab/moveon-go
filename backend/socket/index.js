@@ -15,8 +15,12 @@ function getDist(lat1, lon1, lat2, lon2) {
 module.exports = function initSocket(io) {
   const connectedDrivers = new Map();
   const connectedRiders  = new Map();
+  const riderLastUpdate  = new Map();
   // These maps are initialized in server.js, so we can directly access them.
-  const { activeVehiclePositions, activeBookings, driverToBooking, arrivedNotified } = io;
+  const activeVehiclePositions = io.activeVehiclePositions || new Map();
+  const activeBookings         = io.activeBookings || new Map();
+  const driverToBooking        = io.driverToBooking || new Map();
+  const arrivedNotified        = io.arrivedNotified; // Might be Set or undefined
 
   io.on('connection', (socket) => {
     console.log(`[Socket] Connected: ${socket.id}`);
@@ -26,11 +30,11 @@ module.exports = function initSocket(io) {
       const { lat, lng, radius } = data || {};
       // Validate lat/lng before using in distance calculation
       const isNum = (v) => typeof v === 'number' && !isNaN(v);
-      if (!isNum(lat) || !isNum(lng)) return; // Do not filter if coords are invalid
 
       let snapshot = Array.from(activeVehiclePositions.values());
       const searchRadius = typeof radius === 'number' ? radius : 20;
-      // ✅ PERFORMANCE: Filter snapshot to only show vehicles within a 20km radius.
+
+      // ✅ PERFORMANCE: Filter snapshot to only show vehicles within radius if location is provided.
       // This significantly reduces the payload size and prevents client-side rendering lag.
       if (lat != null && lng != null) {
         snapshot = snapshot.filter(v => {
@@ -191,7 +195,7 @@ module.exports = function initSocket(io) {
       
       // ✅ DISPATCH ROOM: Must be lowercase to match bookings.js
       // FIX: Fetch full vehicle and location details from DB to seed tracking state
-      const driverDoc = await Driver.findById(dId).select('vehicleType vehicleNumber busName routeFrom routeTo routeNumber location status').lean();
+      const driverDoc = await Driver.findById(dId).select('vehicleType vehicleNumber busName routeFrom routeTo routeNumber location status passengers capacity').lean();
       
       if (driverDoc) {
         const typeStr = String(driverDoc.vehicleType || '').trim().toLowerCase();
@@ -205,8 +209,8 @@ module.exports = function initSocket(io) {
         logger.info(`[Socket] Driver ${dId} joined dispatch pool: ${roomName}`);
 
         // Seed activeVehiclePositions with last known data to prevent marker flickering on reconnect
-        // Only seed if coordinates are non-zero (avoiding default empty state)
-        if (driverDoc.location?.lat !== 0 && driverDoc.location?.lng !== 0) {
+        // Only seed if coordinates are present (avoiding uninitialized state)
+        if (driverDoc.location?.lat != null && driverDoc.location?.lng != null) {
           const posPayload = {
             id: dId,
             lat: driverDoc.location.lat,
@@ -220,6 +224,8 @@ module.exports = function initSocket(io) {
             routeFrom: driverDoc.routeFrom || '',
             routeTo: driverDoc.routeTo || '',
             routeNumber: driverDoc.routeNumber || '',
+            passengers: driverDoc.passengers || 0,
+            capacity: driverDoc.capacity || 60,
             ts: Date.now()
           };
           activeVehiclePositions.set(dId, posPayload);
@@ -298,8 +304,10 @@ module.exports = function initSocket(io) {
         routeFrom:   routeFrom   || '',
         routeTo:     routeTo     || '',
         routeNumber: routeNumber || '',
-        passengers:  passengers  || cached.passengers || 0,
-        capacity:    capacity    || cached.capacity   || 60,
+        // BUG FIX: Use null-check instead of falsy check to allow '0' passengers
+        // This ensures a bus showing 'Full' can transition back to 'Empty'.
+        passengers:  passengers != null ? passengers : (cached.passengers || 0),
+        capacity:    capacity   != null ? capacity   : (cached.capacity   || 60),
         ts: Date.now(),
       };
       // Use cached metadata for reliability
@@ -320,6 +328,8 @@ module.exports = function initSocket(io) {
           'location.speed':     speed   || 0,
           'location.updatedAt': new Date(),
           status:               status  || 'active', // Update status based on client, but onDuty is separate
+          passengers:           posPayload.passengers,
+          capacity:             posPayload.capacity,
           // onDuty is controlled by the /duty endpoint, not implicitly by location updates
         });
       } catch {}
@@ -337,7 +347,7 @@ module.exports = function initSocket(io) {
 
         // 2. Automated "Arrived" notification logic
         const bIdStr = String(activeBookingId);
-        if (!arrivedNotified.has(bIdStr)) {
+        if (arrivedNotified && !arrivedNotified.has(bIdStr)) {
           const bookingData = await Booking.findById(bIdStr).select('pickupLat pickupLng status').lean();
           if (bookingData && bookingData.status === 'accepted') {
             const dist = getDist(lat, lng, bookingData.pickupLat, bookingData.pickupLng); // Distance in KM
@@ -355,7 +365,8 @@ module.exports = function initSocket(io) {
 
       if (status === 'SOS') {
         console.warn(`[SOS] Driver ${driverId} at ${lat},${lng}`);
-        io.emit('driver:sos', { driverId, lat, lng, ts: Date.now() });
+        // MONITORING FIX: Broadcast SOS alerts specifically to the 'admins' room
+        io.to('admins').emit('driver:sos', { driverId, lat, lng, ts: Date.now() });
       }
     }));
 
@@ -363,6 +374,13 @@ module.exports = function initSocket(io) {
     socket.on('rider:location', (data) => {
       const { bookingId, lat, lng, bearing, speed } = data || {};
       if (!bookingId || lat == null || lng == null) return;
+
+      // THROTTLE FIX: Prevent server overload during busy hours by limiting rider updates
+      const now = Date.now();
+      const last = riderLastUpdate.get(String(bookingId)) || 0;
+      if (now - last < 2000) return; // Allow update every 2 seconds
+      riderLastUpdate.set(String(bookingId), now);
+
       const driverId = activeBookings.get(String(bookingId));
       if (!driverId) return;
       io.to(`driver:${driverId}`).emit('rider:locationUpdate', {
@@ -402,10 +420,10 @@ module.exports = function initSocket(io) {
       if (!token) return;
       try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        // Security: Ensure only admins can join this room
-        if (decoded.role === 'admin' || decoded.type === 'admin') {
+        // Security: Ensure only admins can join this room (sync with admin.js token payload)
+        if (decoded.type === 'admin') {
           socket.join('admins');
-          logger.info(`[Socket] Admin ${decoded.id} joined management room`);
+          logger.info(`[Socket] Admin joined management room`);
         }
       } catch (err) {
         logger.error(`Admin JWT verification failed: ${err.message}`);
@@ -431,7 +449,8 @@ module.exports = function initSocket(io) {
       // FIX: Evacuate the room after trip completion
       io.in(roomName).socketsLeave(roomName);
       activeBookings.delete(String(bookingId));
-      io.arrivedNotified?.delete(String(bookingId)); // FIX: Clean up notification tracking
+      if (arrivedNotified) arrivedNotified.delete(String(bookingId)); 
+      riderLastUpdate.delete(String(bookingId)); // Clean up throttle map
       if (driverId) driverToBooking.delete(String(driverId));
       console.log(`[Socket] trip:ended for booking ${bookingId} — rider notified`);
     });
@@ -468,6 +487,7 @@ module.exports = function initSocket(io) {
           });
         }
         connectedRiders.delete(socket.id);
+        riderLastUpdate.delete(String(bookingId)); // Clean up throttle map
         logger.info(`[Socket] Rider for booking ${bookingId} disconnected.`);
       }
 
@@ -497,7 +517,7 @@ module.exports = function initSocket(io) {
           });
           driverToBooking.delete(String(driverId));
           activeBookings.delete(bIdStr);
-          arrivedNotified.delete(bIdStr);
+          if (arrivedNotified) arrivedNotified.delete(bIdStr);
           logger.info(`[Socket] Driver ${driverId} disconnected mid-ride — rider for booking ${bIdStr} notified`);
         }
 
@@ -512,9 +532,48 @@ module.exports = function initSocket(io) {
 
   global.io = io;
 
-  // Mark stale drivers offline every minute
+  // Background Maintenance: Runs every minute to cleanup stale state
   setInterval(async () => {
     try {
+      // 1. Cleanup Stale 'Searching' Bookings (Server-side Timeout)
+      // Mirroring the frontend timeout to ensure drivers don't see ghost requests
+      const bookingTimeout = new Date(Date.now() - 90000); // 90s threshold
+      const staleBookings = await Booking.find({
+        status: 'searching',
+        createdAt: { $lt: bookingTimeout }
+      }).select('_id');
+
+      for (const b of staleBookings) {
+        await Booking.updateOne({ _id: b._id }, { status: 'cancelled' });
+        const bIdStr = String(b._id);
+        io.emit('ride:cancelled', { bookingId: bIdStr, id: bIdStr });
+        logger.info(`[Socket] Stale searching booking ${bIdStr} auto-cancelled by server`);
+      }
+
+      // 2. Cleanup Stale 'Accepted' Bookings (Accepted but never started)
+      // If a driver accepts but doesn't start the trip within 21 minutes, 
+      // auto-cancel to allow the rider to book again and free the driver.
+      const acceptedTimeout = new Date(Date.now() - 1260000); // 21 min threshold
+      const staleAccepted = await Booking.find({
+        status: 'accepted',
+        acceptedAt: { $lt: acceptedTimeout }
+      }).select('_id driverId');
+
+      for (const b of staleAccepted) {
+        const bIdStr = String(b._id);
+        await Booking.updateOne({ _id: b._id }, { status: 'cancelled' });
+        await Driver.updateOne({ _id: b.driverId }, { status: 'active', onDuty: true });
+
+        io.to(`booking:${bIdStr}`).emit(`booking:${bIdStr}`, { action: 'cancelled', message: 'Ride cancelled due to pickup delay.' });
+        io.to(`driver:${String(b.driverId)}`).emit('booking:cancelled', { bookingId: bIdStr, action: 'cancelled' });
+        
+        activeBookings.delete(bIdStr);
+        if (arrivedNotified) arrivedNotified.delete(bIdStr);
+        driverToBooking.delete(String(b.driverId));
+        logger.info(`[Socket] Stale accepted booking ${bIdStr} auto-cancelled by server`);
+      }
+
+      // 3. Mark stale drivers offline
       const stale = await Driver.find({
         onDuty: true,
         'location.updatedAt': { $lt: new Date(Date.now() - 90000) }, // 90s stale threshold for buffer
@@ -536,7 +595,7 @@ module.exports = function initSocket(io) {
           });
           driverToBooking.delete(dIdStr);
           activeBookings.delete(bIdStr);
-          arrivedNotified.delete(bIdStr);
+          if (arrivedNotified) arrivedNotified.delete(bIdStr);
           logger.info(`[Socket] Stale driver ${dIdStr} — rider for booking ${bIdStr} notified`);
         }
 

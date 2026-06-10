@@ -88,13 +88,15 @@ export default function Profile() {
   const handleLogout = () => { logout(); navigate('/login'); };
 
   const initials = (() => {
-    if (user?.name) {
-      return user.name.split(' ')
-        .filter(w => w)
-        .map(w => w[0])
-        .slice(0, 2)
-        .join('')
-        .toUpperCase();
+    const namePart = user?.name?.trim();
+    if (namePart) {
+      const parts = namePart.split(/\s+/).filter(Boolean);
+      if (parts.length > 0) {
+        return parts.map(p => p[0])
+          .slice(0, 2)
+          .join('')
+          .toUpperCase();
+      }
     }
     if (user?.phone && typeof user.phone === 'string' && user.phone.length >= 2) {
       return user.phone.slice(-2).toUpperCase();
