@@ -861,107 +861,122 @@ export default function BookRide() {
   // ── Main screen ──────────────────────────────────────────────
   return (
     <div className="app">
-      <Header title="Book a Ride" showBack onBack={() => navigate(-1)}/>
-      <div className="page" style={{padding:'16px'}}>
+      <Header showBack onBack={() => navigate(-1)} rightElement={
+        <div style={{width:44}}/>
+      }/>
+      <div className="page">
 
-        <p className="section-label slide-up" style={{padding:'0 0 8px', animationDelay: '0.05s'}}>Select Vehicle</p>
-        <div style={{display:'flex',flexDirection:'column',gap:8,marginBottom:20}}>
-          {TYPES.map(v => (
-            <button key={v.id}
-              className={`br-type-card card ${type===v.id?'br-type-card--selected':''}`} style={{borderRadius:'20px'}}
-              onClick={() => {
-                playPop();
-                window.navigator?.vibrate?.(10);
-                setType(v.id);
-              }}>
-              <span style={{fontSize:22,marginRight:8}}>{v.emoji}</span>
-              <div style={{flex:1}}>
+        {/* ── Hero Header ── */}
+        <div className="br-hero">
+          <div className="br-hero-inner">
+            <p className="br-hero-eyebrow">Where to?</p>
+            <h1 className="br-hero-title">Book a Ride</h1>
+            <p className="br-hero-sub">Fast, safe & affordable rides at your fingertips</p>
+          </div>
+          <div className="br-hero-bg-circles">
+            <div className="br-hero-circle br-hero-circle--1"/>
+            <div className="br-hero-circle br-hero-circle--2"/>
+          </div>
+        </div>
+
+        <div className="br-content">
+
+          {/* ── Vehicle Type ── */}
+          <p className="br-section-label">Choose Vehicle</p>
+          <div className="br-type-grid">
+            {TYPES.map(v => (
+              <button key={v.id}
+                className={`br-type-card card ${type===v.id?'br-type-card--selected':''}`}
+                style={{borderRadius:'20px'}}
+                onClick={() => {
+                  playPop();
+                  window.navigator?.vibrate?.(10);
+                  setType(v.id);
+                }}>
+                <span className="br-type-emoji">{v.emoji}</span>
                 <div className="br-type-label">{v.label}</div>
-                <div className="br-type-sub">{v.cap} · {v.eta}</div>
-              </div>
-              <div className={`br-radio ${type===v.id?'checked':''}`} />
-            </button>
-          ))}
-        </div>
-
-        <p className="section-label" style={{padding:'0 0 8px'}}>Route Details</p>
-        <div className="card" style={{padding:14,marginBottom:14,overflow:'visible', borderRadius:'24px', border:'1px solid rgba(0,0,0,0.05)'}}>
-          <PlaceSearch placeholder="Pickup location" value={pickup}
-            onSelect={p => { if(p){setPickupCoords(p);setPickup(p.name);setPickupError(false);}else {setPickupCoords(null);setPickup('');} }}
-            dotColor="var(--green-600)"/>
-          <div style={{height:1,background:'var(--gray-200)',margin:'10px 0 10px 20px'}}/>
-          <PlaceSearch placeholder="Drop location" value={dropoff}
-            onSelect={p => { if(p){setDropoffCoords(p);setDropoff(p.name);}else setDropoffCoords(null); }}
-            dotColor="var(--danger)"/>
-        </div>
-        {pickupLoading && (
-          <div style={{display:'flex',alignItems:'center',gap:10,padding:'8px 0',color:'var(--gray-400)',fontSize:13}}>
-            <span className="spinner" style={{width:14,height:14,borderWidth:1.5}}/> Detecting current location...
-          </div>
-        )}
-        {pickupError && !pickupLoading && (
-          <div style={{display:'flex',alignItems:'center',gap:10,padding:'8px 0',color:'var(--danger)',fontSize:13}}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
-            Could not get precise pickup location. Please type it in or enable GPS.
-          </div>
-        )}
-
-        {routeLoading && (
-          <div style={{display:'flex',alignItems:'center',gap:10,padding:'8px 0',color:'var(--gray-400)',fontSize:13}}>
-            <span className="spinner" style={{width:14,height:14,borderWidth:1.5}}/> Calculating route...
-          </div>
-        )}
-
-        {route && fare && !routeLoading && (
-          <div className="card" style={{padding:14,marginBottom:14}}>
-            {[[fmtDist(route.distance),'Distance'],[fmtDuration(route.duration),'Duration'],[fare.display,'Fare Estimate']].map(([v,l],i,a) => (
-              <div key={i}>
-                <div style={{display:'flex',justifyContent:'space-between',padding:'6px 0',fontSize:13}}>
-                  <span style={{color:'var(--gray-500)'}}>{l}</span>
-                  <strong style={{color:i===2?'var(--green-600)':'var(--gray-900)'}}>{v}</strong>
-                </div>
-                {i<a.length-1 && <div className="divider"/>}
-              </div>
+                <div className="br-type-sub">{v.cap}</div>
+                <div className="br-type-sub" style={{color:'var(--blue-700)',fontWeight:600}}>{v.eta}</div>
+                <div className={`br-radio ${type===v.id?'checked':''}`} style={{marginTop:8}}/>
+              </button>
             ))}
           </div>
-        )}
 
-        <p className="section-label" style={{padding:'0 0 8px'}}>Payment Method</p>
-        <div style={{display:'flex',gap:8,marginBottom:8}}>
-          {/* FIX #3: UPI and Card were shown as separate options but both
-              routed through Razorpay — which was never wired up, causing a
-              crash ("api.createPaymentOrder is not a function"). Now: Cash
-              for offline payment, Online for Razorpay (supports UPI + Cards
-              + Net Banking all in one checkout flow). */}
-          {[{id:'Cash',icon:'💵'},{id:'Online',icon:'📱'}].map(m => (
-            <button key={m.id}
-              className={`chip ${payment===m.id?'active':''}`}
-              style={{flex:1,justifyContent:'center',padding:'10px',flexDirection:'column',height:52,gap:2}}
-              onClick={() => setPayment(m.id)}>
-              <span style={{fontSize:16}}>{m.icon}</span>
-              <span style={{fontSize:11}}>{m.id}</span>
-            </button>
-          ))}
-        </div>
-
-        {payment !== 'Cash' && (
-          <div className="br-payment-note">
-            🔒 Secure payment via UPI · Intent based deep-linking
+          {/* ── Route ── */}
+          <p className="br-section-label">Route Details</p>
+          <div className="card" style={{padding:14,marginBottom:10,overflow:'visible',borderRadius:'20px',border:'1px solid rgba(0,0,0,0.06)'}}>
+            <PlaceSearch placeholder="Pickup location" value={pickup}
+              onSelect={p => { if(p){setPickupCoords(p);setPickup(p.name);setPickupError(false);}else {setPickupCoords(null);setPickup('');} }}
+              dotColor="var(--green-600)"/>
+            <div style={{height:1,background:'var(--gray-200)',margin:'10px 0 10px 20px'}}/>
+            <PlaceSearch placeholder="Drop location" value={dropoff}
+              onSelect={p => { if(p){setDropoffCoords(p);setDropoff(p.name);}else setDropoffCoords(null); }}
+              dotColor="var(--danger)"/>
           </div>
-        )}
 
-        <div style={{marginTop:16}}>
-          <button className="btn btn--primary btn--full btn--lg"
-            onClick={handleBook}
-            disabled={!pickup||!dropoff||routeLoading}>
-            {!dropoff          ? 'Enter Drop Location'
-              : routeLoading      ? 'Calculating...'
-              : payment === 'Cash'? `Book ${TYPES.find(v=>v.id===type)?.label} · ${fare?.display || (fare?.amount ? '₹' + fare.amount : 'Get Fare')}`
-              :                     `Pay Online · ${fare?.display || (fare?.amount ? '₹' + fare.amount : 'Get Fare')}`
-            }
-          </button>
+          {pickupLoading && (
+            <div style={{display:'flex',alignItems:'center',gap:10,padding:'6px 0 4px',color:'var(--gray-400)',fontSize:13}}>
+              <span className="spinner" style={{width:14,height:14,borderWidth:1.5}}/> Detecting current location...
+            </div>
+          )}
+          {pickupError && !pickupLoading && (
+            <div style={{display:'flex',alignItems:'center',gap:10,padding:'6px 0 4px',color:'var(--danger)',fontSize:13}}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+              Could not get precise pickup location. Please type it in or enable GPS.
+            </div>
+          )}
+
+          {routeLoading && (
+            <div style={{display:'flex',alignItems:'center',gap:10,padding:'6px 0 4px',color:'var(--gray-400)',fontSize:13}}>
+              <span className="spinner" style={{width:14,height:14,borderWidth:1.5}}/> Calculating route...
+            </div>
+          )}
+
+          {route && fare && !routeLoading && (
+            <div className="card br-route-summary">
+              {[[fmtDist(route.distance),'Distance'],[fmtDuration(route.duration),'Duration'],[fare.display,'Fare Estimate']].map(([v,l],i,a) => (
+                <div key={i} className="br-route-row">
+                  <span className="br-route-key">{l}</span>
+                  <strong className="br-route-val" style={{color:i===2?'var(--green-600)':'var(--gray-900)'}}>{v}</strong>
+                  {i<a.length-1 && <div className="divider" style={{gridColumn:'1/-1',marginTop:0}}/>}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* ── Payment ── */}
+          <p className="br-section-label">Payment</p>
+          <div className="br-payment-row">
+            {[{id:'Cash',icon:'💵',label:'Pay Cash'},{id:'Online',icon:'📱',label:'Pay Online'}].map(m => (
+              <button key={m.id}
+                className={`br-pay-chip ${payment===m.id?'br-pay-chip--active':''}`}
+                onClick={() => setPayment(m.id)}>
+                <span style={{fontSize:20}}>{m.icon}</span>
+                <span>{m.label}</span>
+              </button>
+            ))}
+          </div>
+
+          {payment !== 'Cash' && (
+            <div className="br-payment-note">
+              🔒 Secure payment via UPI · Intent based deep-linking
+            </div>
+          )}
+
+          {/* ── Book CTA ── */}
+          <div className="br-cta-wrap">
+            <button className="btn btn--primary btn--full btn--lg br-cta-btn"
+              onClick={handleBook}
+              disabled={!pickup||!dropoff||routeLoading}>
+              {!dropoff          ? '📍 Enter Drop Location'
+                : routeLoading  ? 'Calculating...'
+                : payment === 'Cash'? `Book ${TYPES.find(v=>v.id===type)?.label} · ${fare?.display || (fare?.amount ? '₹' + fare.amount : 'Get Fare')}`
+                :                    `Pay Online · ${fare?.display || (fare?.amount ? '₹' + fare.amount : 'Get Fare')}`
+              }
+            </button>
+          </div>
+
         </div>
-
       </div>
       <BottomNav/>
     </div>

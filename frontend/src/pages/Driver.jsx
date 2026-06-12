@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Header from '../components/Header';
 import api from '../services/api';
-import { emitLocation, onRideRequest, connectSocket, disconnectSocket, getSocket, joinBookingRoom } from '../services/socket';
+import { emitLocation, onRideRequest, connectSocket, disconnectSocket, getSocket } from '../services/socket';
 import { setDriverSession, getDriver, getDriverToken, clearDriverSession, getActiveDriverRide, setActiveDriverRide, clearActiveDriverRide } from '../services/storage';
 import { watchPosition } from '../services/geocoding';
 import { useConfig } from '../context/ConfigContext';
@@ -329,7 +329,6 @@ export default function Driver() {
               };
               setActiveRide(verifiedRide);
               setActiveDriverRide(verifiedRide);
-              joinBookingRoom(verifiedRide.id);
               setOnDuty(true);
               setTripActive(liveBooking.status === 'started');
               setPassengers(liveBooking.status === 'started' ? 1 : 0);
@@ -877,7 +876,6 @@ export default function Driver() {
       };
       setActiveRide(acceptedRide);
       setActiveDriverRide(acceptedRide);
-      joinBookingRoom(req.id);
       // FIX: Only clear if this is the request we just processed
       setRideReq(prev => prev?.id === req?.id ? null : prev);
       setUserLocation(null);

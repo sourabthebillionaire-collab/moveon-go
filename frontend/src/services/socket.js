@@ -30,7 +30,7 @@ export function getSocket() {
   if (!_socket) {
     _socket = io(SOCKET_URL, {
       transports: ['websocket', 'polling'],
-      reconnectionAttempts: 10,
+      reconnectionAttempts: Infinity,
       reconnectionDelay: 2000,
       timeout: 8000,
       autoConnect: false,
