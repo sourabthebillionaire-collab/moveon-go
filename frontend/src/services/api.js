@@ -12,7 +12,7 @@ const BASE = (import.meta.env.VITE_API_URL?.trim() ||
              (import.meta.env.PROD ? '/api' : 'http://localhost:3001/api'))
              .replace(/\/$/, '');
 
-const REQUEST_TIMEOUT = 10000; // 10 seconds
+const REQUEST_TIMEOUT = 60000; // 60 seconds (accommodates free-tier backend cold starts)
 
 async function request(method, path, body = null, token = null) {
   const headers = { 'Content-Type': 'application/json' };
