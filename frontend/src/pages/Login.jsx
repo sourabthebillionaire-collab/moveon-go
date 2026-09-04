@@ -3,47 +3,57 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import api from '../services/api';
 import './Login.css';
+
 export default function Login() {
   const navigate  = useNavigate();
   const location  = useLocation();
   const { login, isLoggedIn } = useAuth();
 
-  const [phone,   setPhone]   = useState('');
-  const [name,    setName]    = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error,   setError]   = useState('');
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [name,     setName]     = useState('');
+  const [email,    setEmail]    = useState('');
+  const [password, setPassword] = useState('');
+  const [loading,  setLoading]  = useState(false);
+  const [error,    setError]    = useState('');
 
   const from = location.state?.from || '/';
 
   useEffect(() => {
     if (isLoggedIn) navigate(from, { replace: true });
-  }, [isLoggedIn]);
+  }, [isLoggedIn, navigate, from]);
 
-  const handleLogin = async (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
 
-    const cleanPhone = phone.trim().replace(/[^0-9+]/g, ''); // Ensure consistent phone number format
-    if (!cleanPhone) {
-      setError('Please enter your phone number.');
+    if (!email.trim() || !password.trim()) {
+      setError('Please fill in both email and password.');
       return;
     }
-    if (cleanPhone.replace(/\D/g, '').length < 10) {
-      setError('Please enter a valid 10-digit phone number.');
+
+    if (isRegistering && !name.trim()) {
+      setError('Please provide your name.');
       return;
     }
 
     setLoading(true);
+
     try {
-      const data = await api.login(cleanPhone, name.trim());
+      let data;
+      if (isRegistering) {
+        data = await api.register(name.trim(), email.trim(), password);
+      } else {
+        data = await api.login(email.trim(), password);
+      }
+      
       if (!data.token) {
-        setError(data.message || 'Login failed. Please try again.');
+        setError(data.message || 'Authentication failed. Please try again.');
         return;
       }
-
+      
       login(data.user, data.token);
       navigate(from, { replace: true });
-
+      
     } catch (err) {
       setError(err.message || 'Service unreachable. Please check your internet connection.');
     } finally {
@@ -68,35 +78,50 @@ export default function Login() {
 
         {/* Card */}
         <div className="login-card card">
-          <h2 className="login-title">Welcome</h2>
-          <p className="login-sub">Enter your phone number to continue</p>
+          <h2 className="login-title">{isRegistering ? 'Create Account' : 'Welcome Back'}</h2>
+          <p className="login-sub">
+            {isRegistering ? 'Sign up to get started' : 'Log in to your account'}
+          </p>
 
-          <form onSubmit={handleLogin} className="login-form">
+          <form onSubmit={handleSubmit} className="login-form">
+
+            {isRegistering && (
+              <div className="login-field">
+                <label className="login-label">Full Name</label>
+                <input
+                  className="input"
+                  type="text"
+                  value={name}
+                  onChange={e => { setName(e.target.value); setError(''); }}
+                  placeholder="e.g. John Doe"
+                  autoComplete="name"
+                  disabled={loading}
+                />
+              </div>
+            )}
 
             <div className="login-field">
-              <label className="login-label">Phone Number</label>
+              <label className="login-label">Email Address</label>
               <input
                 className="input"
-                type="tel"
-                value={phone}
-                onChange={e => { setPhone(e.target.value); setError(''); }}
-                placeholder="+91 98765 43210"
-                autoFocus
-                autoComplete="tel"
+                type="email"
+                value={email}
+                onChange={e => { setEmail(e.target.value); setError(''); }}
+                placeholder="you@example.com"
+                autoComplete="email"
                 disabled={loading}
-                maxLength={15}
               />
             </div>
 
             <div className="login-field">
-              <label className="login-label">Your Name <span style={{ color: 'var(--gray-400)', fontWeight: 400 }}>(optional)</span></label>
+              <label className="login-label">Password</label>
               <input
                 className="input"
-                type="text"
-                value={name}
-                onChange={e => setName(e.target.value)}
-                placeholder="e.g. Sarub Bacha"
-                autoComplete="name"
+                type="password"
+                value={password}
+                onChange={e => { setPassword(e.target.value); setError(''); }}
+                placeholder="••••••••"
+                autoComplete={isRegistering ? 'new-password' : 'current-password'}
                 disabled={loading}
               />
             </div>
@@ -106,19 +131,26 @@ export default function Login() {
             <button
               className="btn btn--primary btn--full btn--lg"
               type="submit"
-              disabled={loading || !phone.trim()}
-              style={{ marginTop: 4 }}
+              disabled={loading || !email.trim() || !password.trim()}
+              style={{ marginTop: 12 }}
             >
               {loading
-                ? <><span className="spinner" style={{ width: 16, height: 16, borderWidth: 2 }} /> Signing in...</>
-                : 'Continue →'
+                ? <><span className="spinner" style={{ width: 16, height: 16, borderWidth: 2 }} /> {isRegistering ? 'Signing up...' : 'Logging in...'}</>
+                : (isRegistering ? 'Sign Up →' : 'Log In →')
               }
             </button>
 
           </form>
 
-          <p className="login-info">
-            No OTP needed. Your number will be saved securely.
+          <p className="login-info" style={{ marginTop: 20 }}>
+            {isRegistering ? 'Already have an account?' : "Don't have an account?"}
+            <button 
+              type="button" 
+              onClick={() => { setIsRegistering(!isRegistering); setError(''); }}
+              style={{ background: 'none', border: 'none', color: 'var(--blue-600)', fontWeight: 600, cursor: 'pointer', marginLeft: 8 }}
+            >
+              {isRegistering ? 'Log In' : 'Sign Up'}
+            </button>
           </p>
         </div>
 

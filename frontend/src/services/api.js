@@ -58,8 +58,11 @@ const del    = (path, token)       => request('DELETE', path, null, token);
 export const api = {
 
   // ── User Auth ─────────────────────────────────────────────────
-  login: (phone, name) =>
-    post('/auth/login', { phone, name }),
+  register: (name, email, password) =>
+    post('/auth/register', { name, email, password }),
+    
+  login: (email, password) =>
+    post('/auth/login', { email, password }),
 
   getProfile: (token) =>
     get('/auth/me', token),

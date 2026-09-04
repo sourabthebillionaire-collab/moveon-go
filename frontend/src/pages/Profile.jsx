@@ -21,7 +21,7 @@ export default function Profile() {
 
   const [editing,   setEditing]   = useState(false);
   const [name,      setName]      = useState(user?.name  || '');
-  const [email,     setEmail]     = useState(user?.email || '');
+  const [phone,     setPhone]     = useState(user?.phone || '');
   const [saving,    setSaving]    = useState(false);
   const [saveErr,   setSaveErr]   = useState('');
   const [saveOk,    setSaveOk]    = useState(false);
@@ -46,7 +46,7 @@ export default function Profile() {
         if (data.user) {
           if (updateUser) updateUser(data.user);
           setName(data.user.name || '');
-          setEmail(data.user.email || '');
+          setPhone(data.user.phone || '');
         }
       })
       .catch(() => {});
@@ -58,7 +58,7 @@ export default function Profile() {
 
   const startEdit = () => {
     setName(user?.name || '');
-    setEmail(user?.email || '');
+    setPhone(user?.phone || '');
     setSaveErr('');
     setSaveOk(false);
     setEditing(true);
@@ -76,7 +76,7 @@ export default function Profile() {
     setSaving(true);
     try {
       const token = getToken();
-      const data  = await api.updateProfile({ name: name.trim(), email: email.trim() }, token);
+      const data  = await api.updateProfile({ name: name.trim(), phone: phone.trim() }, token);
       if (updateUser) updateUser(data.user);
       setSaveOk(true);
       setTimeout(() => { setSaveOk(false); setEditing(false); }, 1000);
@@ -98,8 +98,8 @@ export default function Profile() {
           .toUpperCase();
       }
     }
-    if (user?.phone && typeof user.phone === 'string' && user.phone.length >= 2) {
-      return user.phone.slice(-2).toUpperCase();
+    if (user?.email && typeof user.email === 'string' && user.email.length >= 2) {
+      return user.email.slice(0, 2).toUpperCase();
     }
     return 'U';
   })();
@@ -187,14 +187,14 @@ export default function Profile() {
 
               <div className="prf-field">
                 <label className="prf-field__label">
-                  Email <span className="prf-field__opt">(optional)</span>
+                  Phone <span className="prf-field__opt">(optional)</span>
                 </label>
                 <input
                   className="prf-input"
-                  type="email"
-                  value={email}
-                  onChange={e => { setEmail(e.target.value); setSaveErr(''); }}
-                  placeholder="your@email.com"
+                  type="tel"
+                  value={phone}
+                  onChange={e => { setPhone(e.target.value); setSaveErr(''); }}
+                  placeholder="Your phone number"
                 />
               </div>
 

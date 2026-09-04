@@ -33,8 +33,8 @@ export default function SideDrawer({ open, onClose }) {
           .toUpperCase();
       }
     }
-    if (user?.phone && typeof user.phone === 'string' && user.phone.length >= 2) {
-      return user.phone.slice(-2).toUpperCase();
+    if (user?.email && typeof user.email === 'string' && user.email.length >= 2) {
+      return user.email.slice(0, 2).toUpperCase();
     }
     return 'U';
   })();
@@ -51,7 +51,7 @@ export default function SideDrawer({ open, onClose }) {
           <div className="drawer__avatar">{initials}</div>
           <div className="drawer__user">
             <div className="drawer__name">{user?.name || 'Guest'}</div>
-            <div className="drawer__phone">{user?.phone || ''}</div>
+            <div className="drawer__phone">{user?.email || user?.phone || ''}</div>
           </div>
           <button className="drawer__close" onClick={onClose}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">

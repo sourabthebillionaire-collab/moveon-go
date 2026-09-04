@@ -1,9 +1,11 @@
 const mongoose = require('mongoose');
 
 const userSchema = new mongoose.Schema({
-  phone:     { type: String, required: true, unique: true, trim: true },
+  email:     { type: String, required: true, unique: true, trim: true },
+  password:  { type: String, required: true },
   name:      { type: String, trim: true, default: '' },
-  email:     { type: String, trim: true, default: '' },
+  picture:   { type: String, trim: true, default: '' },
+  phone:     { type: String, trim: true, default: '' },
   role:      { type: String, enum: ['passenger', 'admin'], default: 'passenger' },
   isActive:  { type: Boolean, default: true },
   lastLogin: { type: Date, default: Date.now },
