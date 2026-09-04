@@ -29,7 +29,12 @@ fareRouter.post('/estimate', asyncHandler(async (req, res) => {
   }
 
   const distKm = haversine(from.lat, from.lng, to.lat, to.lng);
-  const rates  = { auto: { base:25, per:14 }, cab: { base:60, per:16 }, bike: { base:20, per:8 } };
+  const rates  = { 
+    auto: { base: 25, per: 14 }, 
+    cab:  { base: 60, per: 16 }, 
+    bike: { base: 20, per: 8 },
+    bus:  { base: 0,  per: 15 } 
+  };
   // SYNC: Support 'Bike' or 'bike' strings from various client versions
   const r      = rates[String(vehicleType).toLowerCase()] || rates.auto;
   const amt    = Math.round(r.base + distKm * r.per);

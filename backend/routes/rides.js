@@ -127,7 +127,7 @@ router.put('/:rideId/start', protectDriver, asyncHandler(async (req, res) => {
   if (global.io) {
     const payload = {
       action: 'started', bookingId: String(rideId),
-      booking: booking, // Full update for rider
+      booking: { ...booking, _id: String(booking._id) }, // Full update for rider
       driverId: String(req.driver._id), // For room routing
       driver: {
         driverId: String(req.driver._id), // For rider state update
@@ -223,9 +223,9 @@ router.put('/:rideId/boarded', protect, asyncHandler(async (req, res) => {
 
   if (global.io) {
     const booking = await Booking.findById(rideId).select('driverId').lean();
-    if (booking?.driverId) {
-      // Notify the driver via their private socket room
-      global.io.to(`driver:${booking.driverId}`).emit('rider:notification', {
+    if (booking && booking.driverId) {
+      // FIX: Ensure driverId is a string for the socket room
+      global.io.to(`driver:${String(booking.driverId)}`).emit('rider:notification', {
         type: 'BOARDED',
         message: 'Passenger confirmed boarding! ✅',
         bookingId: rideId

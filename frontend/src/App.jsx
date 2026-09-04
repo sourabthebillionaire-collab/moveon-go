@@ -13,7 +13,8 @@ import Favourites     from './pages/Favourites';
 import Settings       from './pages/Settings';
 import Admin          from './pages/Admin';
 import DriverRegister from './pages/DriverRegister';
-import { Privacy, Support } from './pages/PublicPages';
+import Privacy from './pages/Privacy';
+import Support from './pages/Support';
 import './index.css';
 
 function ProtectedRoute({ children }) {

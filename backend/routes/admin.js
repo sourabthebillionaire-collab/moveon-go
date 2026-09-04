@@ -147,7 +147,10 @@ router.put('/drivers/:id/approve', adminAuth, asyncHandler(async (req, res) => {
     if (global.io) {
       // ✅ Targeted notification: only notify the specific vehicle room
       const vRoom = `vehicle:${driver.vehicleId}`;
-      global.io.to(vRoom).emit('driver:approved', { driverId: driver._id, vehicleId: driver.vehicleId });
+      global.io.to(vRoom).emit('driver:approved', { 
+        driverId: String(driver._id), 
+        vehicleId: driver.vehicleId 
+      });
       
       // ✅ Cleanup: Force unapproved connections to leave the temporary vehicle room
       global.io.in(vRoom).socketsLeave(vRoom);

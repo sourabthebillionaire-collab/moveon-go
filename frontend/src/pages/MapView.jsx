@@ -617,9 +617,285 @@ export default function MapView() {
 
   const filtered = filter === 'all' ? vehicles : vehicles.filter(v => v.type === filter);
 
+  const typeColors = { bus: '#1565C0', auto: '#E6A800', cab: '#1565C0', bike: '#DC2626' };
+  const typeEmoji  = { bus: '🚌', auto: '🛺', cab: '🚕', bike: '🏍️' };
+
   return (
     <div className="app">
-      <Header title="Live Map" />
+      <Header title="Live Map" rightElement={
+        <button className="header__icon-btn" onClick={handleShareMap} aria-label="Share Map">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8M16 6l-4-4-4 4M12 2v13"/>
+          </svg>
+        </button>
+      }/>
+
+      <div className="page map-page">
+
+        {/* ── Top loading bar ── */}
+        {loading && <div className="map-loading-bar" />}
+
+        {/* ── Floating filter pill ── */}
+        <div className="map-topbar">
+          <div className="map-filter-pill">
+            {['all','bus','auto','cab','bike'].map(f => (
+              <button
+                key={f}
+                className={`map-filter-chip ${filter===f?'active':''}`}
+                onClick={() => setFilter(f)}
+              >
+                {f === 'all' ? 'All' : `${typeEmoji[f]} ${f.charAt(0).toUpperCase()+f.slice(1)}`}
+              </button>
+            ))}
+
+            {locStatus.error && (
+              <>
+                <div className="map-pill-divider" />
+                <div className="map-gps-badge">
+                  <span>⚠️</span>
+                  <span>{locStatus.label}</span>
+                </div>
+              </>
+            )}
+
+            <div className="map-pill-divider" />
+
+            {/* Radius selector */}
+            <button
+              className={`map-radius-btn ${radiusExpanded ? 'active' : ''}`}
+              onClick={() => setRadiusExpanded(!radiusExpanded)}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+              </svg>
+              {radiusExpanded ? (
+                <select
+                  className="map-radius-select"
+                  value={searchRadius}
+                  onChange={e => setSearchRadius(Number(e.target.value))}
+                  onClick={e => e.stopPropagation()}
+                >
+                  {[5, 10, 20, 50].map(r => <option key={r} value={r}>{r} km</option>)}
+                </select>
+              ) : (
+                <span>{searchRadius} km</span>
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* ── "Search this area" floating button ── */}
+        {showSearchButton && (
+          <button className="map-search-here-btn" onClick={handleSearchThisArea}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+              <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+            </svg>
+            Search this area
+          </button>
+        )}
+
+        {/* ── Map canvas ── */}
+        <div ref={mapRef} className="map-canvas" />
+
+        {/* ── Empty state (non-blocking overlay at top) ── */}
+        {!loading && filtered.length === 0 && (
+          <div className="map-empty-overlay">
+            <div className="map-empty-card">
+              <div className="map-empty-icon">
+                {locStatus.error
+                  ? <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+                  : <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect width="16" height="16" x="4" y="3" rx="2"/><path d="M4 11h16M8 15h.01M16 15h.01M6 19v2M18 19v2"/></svg>
+                }
+              </div>
+              <div className="map-empty-text">
+                <h3>{locStatus.error ? 'Location Required' : 'No vehicles nearby'}</h3>
+                <p>
+                  {locStatus.error
+                    ? `${locStatus.label} — enable GPS to see vehicles.`
+                    : 'No active drivers in your area yet. Try a larger radius.'}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Location tooltip ── */}
+        {showLocationTooltip && (
+          <div className="map-location-tooltip">
+            <div className="tooltip-dot" />
+            <span>You are here</span>
+          </div>
+        )}
+
+        {/* ── Floating action controls ── */}
+        <div className="map-controls-group" style={{
+          bottom: selected ? '260px' : '84px',
+        }}>
+          <button
+            onClick={toggleFollowMe}
+            aria-label="Follow Me"
+            className={`map-control-btn ${followMe ? 'primary follow-active' : ''}`}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24"
+              fill={followMe ? 'white' : 'none'}
+              stroke={followMe ? 'white' : 'var(--blue-600)'}
+              strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <polygon points="3 11 22 2 13 21 11 13 3 11"/>
+            </svg>
+            <span className="map-control-label">{followMe ? 'Live' : 'Follow'}</span>
+          </button>
+
+          <button
+            onClick={handleRecenter}
+            className="map-control-btn"
+            aria-label="My Location"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--blue-600)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M2 12h3M22 12h-3M12 2v3M12 22v-3"/>
+              <circle cx="12" cy="12" r="7"/>
+              <circle cx="12" cy="12" r="2" fill="var(--blue-600)"/>
+            </svg>
+            <span className="map-control-label">Me</span>
+          </button>
+
+          <button
+            onClick={toggleSearchArea}
+            className={`map-control-btn ${showSearchArea ? 'primary' : ''}`}
+            aria-label="Toggle Search Area"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+              stroke={showSearchArea ? 'white' : 'var(--blue-600)'}
+              strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="9" strokeDasharray="3 3"/>
+              <circle cx="12" cy="12" r="2" fill="currentColor"/>
+            </svg>
+            <span className="map-control-label">Area</span>
+          </button>
+        </div>
+
+        {/* ── Bottom panel ── */}
+        <div className="map-panel">
+
+          {/* Vehicle chip strip */}
+          {filtered.length > 0 && (
+            <div className="map-vehicle-strip">
+              {filtered.map(v => {
+                const color = typeColors[v.type] || typeColors.bus;
+                const isOff = v.status === 'offline';
+                return (
+                  <button
+                    key={v.id}
+                    className={`map-vehicle-chip ${selected?.id===v.id ? 'active' : ''}`}
+                    onClick={() => focusVehicle(v)}
+                  >
+                    <span className="map-vehicle-chip-dot" style={{ background: isOff ? '#94A3B8' : color }} />
+                    {typeEmoji[v.type] || '🚗'} {v.vehicleNumber || v.number || v.type}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Detail card */}
+          <div className={`map-detail-card ${!selected ? 'hidden' : ''}`}>
+            <div className="map-detail-handle" />
+            {displayVehicle && (
+              <div className="map-detail-inner">
+                <div className="map-detail__row">
+                  <div className="map-detail__badge" style={{
+                    background: displayVehicle.status === 'offline' ? '#64748B' : (typeColors[displayVehicle.type] || typeColors.bus)
+                  }}>
+                    <div>{typeEmoji[displayVehicle.type] || '🚗'}</div>
+                    <div style={{fontSize:9,marginTop:1}}>{displayVehicle.type?.toUpperCase()}</div>
+                  </div>
+                  <div className="map-detail__info">
+                    <div className="map-detail__num">{displayVehicle.vehicleNumber || displayVehicle.number || 'Vehicle'}</div>
+                    {(displayVehicle.routeFrom || displayVehicle.from) && (displayVehicle.routeTo || displayVehicle.to) && (
+                      <div className="map-detail__route">
+                        🛣 {displayVehicle.routeFrom || displayVehicle.from} → {displayVehicle.routeTo || displayVehicle.to}
+                      </div>
+                    )}
+                    <div className="map-detail__status">
+                      <span className="live-dot" style={{
+                        width: 6, height: 6,
+                        background: displayVehicle.status === 'offline' ? '#94A3B8' : 'var(--green-600)'
+                      }}/>
+                      {displayVehicle.status === 'offline' ? (
+                        <span style={{color:'#94A3B8'}}>
+                          Offline · {displayVehicle.ts ? (Math.floor((Date.now()-displayVehicle.ts)/60000) < 1 ? 'Just now' : `${Math.floor((Date.now()-displayVehicle.ts)/60000)}m ago`) : ''}
+                        </span>
+                      ) : (
+                        <span>Live · {displayVehicle.speed || 0} km/h</span>
+                      )}
+                    </div>
+                  </div>
+                  {loadRoute ? (
+                    <span className="spinner" style={{width:22,height:22}}/>
+                  ) : routeInfo ? (
+                    <div className="map-detail__eta">
+                      <div className="map-detail__eta-val">{fmtDuration(routeInfo.duration)}</div>
+                      <div className="map-detail__eta-dist">{fmtDist(routeInfo.distance)}</div>
+                    </div>
+                  ) : null}
+                </div>
+
+                {/* Stats row */}
+                <div className="map-detail__stats">
+                  <div className="map-detail__stat">
+                    <div className="map-detail__stat-val">{displayVehicle.speed || 0}</div>
+                    <div className="map-detail__stat-key">km/h</div>
+                  </div>
+                  <div className="map-detail__stat">
+                    <div className="map-detail__stat-val">{routeInfo ? fmtDist(routeInfo.distance) : '--'}</div>
+                    <div className="map-detail__stat-key">Distance</div>
+                  </div>
+                  <div className="map-detail__stat">
+                    <div className="map-detail__stat-val">{displayVehicle.capacity || (displayVehicle.type === 'bus' ? 60 : displayVehicle.type === 'auto' ? 3 : 1)}</div>
+                    <div className="map-detail__stat-key">Capacity</div>
+                  </div>
+                </div>
+
+                {/* Occupancy bar (buses only) */}
+                {displayVehicle.type === 'bus' && typeof displayVehicle.passengers === 'number' && (
+                  <div className="map-detail__occ">
+                    <div className="map-detail__occ-bar">
+                      <div className="map-detail__occ-fill" style={{
+                        width: `${Math.min(100, Math.round((displayVehicle.passengers / (displayVehicle.capacity || 60)) * 100))}%`,
+                        background: (displayVehicle.passengers / (displayVehicle.capacity || 60)) > 0.8 ? 'var(--danger)' : 'var(--green-600)'
+                      }}/>
+                    </div>
+                    <span>{displayVehicle.passengers}/{displayVehicle.capacity || 60} seats</span>
+                  </div>
+                )}
+
+                {/* Actions */}
+                <div className="map-detail__actions">
+                  <button className="btn btn--secondary" style={{flex:1,borderRadius:14}} onClick={() => focusVehicle(displayVehicle)}>
+                    📍 Show Route
+                  </button>
+                  {displayVehicle.type !== 'bus' ? (
+                    <button className="btn btn--primary" style={{flex:1,borderRadius:14}}
+                      onClick={() => navigate(`/book?type=${displayVehicle.type}&vehicleId=${displayVehicle.id}`)}>
+                      Book Now
+                    </button>
+                  ) : (
+                    <button className="btn btn--ghost" style={{flex:1,borderRadius:14}}
+                      onClick={() => setSelected(null)}>
+                      Dismiss
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+      </div>
+      <BottomNav />
+    </div>
+  );
+}
+
       <div className="page map-page" style={{ position: 'relative' }}>
 
         {/* Filter bar */}
